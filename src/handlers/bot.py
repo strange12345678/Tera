@@ -439,12 +439,12 @@ Hi {user.first_name}!
                 file_size = os.path.getsize(file_path)
                 file_size_mb = file_size / (1024 * 1024)
                 
-                if file_size_mb > 2000:  # Telegram API limit is 2000MB for bots
+                if file_size_mb > config.MAX_TELEGRAM_FILE_SIZE_MB:  # Telegram API limit
                     logger.warning(f"File too large: {file_size_mb:.1f}MB")
                     try:
                         os.remove(file_path)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up file: {e}")
                     await processing_msg.edit_text(
                         f"❌ **File Too Large**\n\n"
                         f"📊 Size: {file_size_mb:.1f}MB\n\n"
@@ -618,12 +618,12 @@ Hi {user.first_name}!
                 file_size = os.path.getsize(file_path)
                 file_size_mb = file_size / (1024 * 1024)
                 
-                if file_size_mb > 2000:  # Telegram API limit is 2000MB for bots
+                if file_size_mb > config.MAX_TELEGRAM_FILE_SIZE_MB:  # Telegram API limit
                     logger.warning(f"File too large: {file_size_mb:.1f}MB")
                     try:
                         os.remove(file_path)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up file: {e}")
                     await processing_msg.edit_text(
                         f"❌ **File Too Large**\n\n"
                         f"📊 Size: {file_size_mb:.1f}MB\n\n"
@@ -733,8 +733,6 @@ Hi {user.first_name}!
         """Create premium menu keyboard"""
         buttons = [
             [InlineKeyboardButton("💸 Get Premium 💸", callback_data="get_premium_qr")],
-            [InlineKeyboardButton("✅ Activate Premium (30 days)", callback_data="activate_premium")],
-            [InlineKeyboardButton("🔄 Auto-Upload Setup", callback_data="auto_upload")],
             [InlineKeyboardButton("⬅️ Back", callback_data="back_main")]
         ]
         return InlineKeyboardMarkup(buttons)
@@ -746,45 +744,64 @@ Hi {user.first_name}!
     
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /stats command or stats callback"""
-        user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
-        
-        # Get user stats from database
-        user_stats = db.get_user_stats(user_id)
-        downloads_count = user_stats.get('downloads_count', 0)
-        downloads_today = user_stats.get('downloads_today', 0)
-        join_date = user_stats.get('joined_at', datetime.now())
-        
-        # Get full user data for premium info
-        user_data = db.get_user(user_id)
-        is_premium = user_data.get('is_premium', False)
-        premium_tier = user_data.get('premium_tier', 'free')
-        premium_until = user_data.get('premium_until', None)
-        
-        # Get remaining downloads
-        remaining_info = db.get_remaining_downloads(user_id)
-        remaining = remaining_info.get('remaining', 0)
-        daily_limit = remaining_info.get('limit', 0)
-        
-        # Format join date
-        if isinstance(join_date, str):
-            join_date = datetime.fromisoformat(join_date)
-        days_member = (datetime.now() - join_date).days if join_date else 0
-        
-        # Create tier emoji
-        tier_emoji = {'bronze': '🥉', 'gold': '🥈', 'diamond': '💎', 'free': '🆓'}.get(premium_tier, '🆓')
-        premium_badge = f"{tier_emoji} **{premium_tier.upper()} TIER**"
-        
-        # Format tier info
-        if premium_tier == 'bronze':
-            tier_info = "🥉 Bronze (100 downloads/day)"
-        elif premium_tier == 'gold':
-            tier_info = "🥈 Gold (500 downloads/day)"
-        elif premium_tier == 'diamond':
-            tier_info = "💎 Diamond (UNLIMITED downloads)"
-        else:
-            tier_info = "🆓 Free (5 downloads/day)"
-        
-        stats_msg = f"""{premium_badge}
+        try:
+            user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
+            
+            # Get user stats from database
+            user_stats = db.get_user_stats(user_id) or {}
+            downloads_count = user_stats.get('downloads_count', 0)
+            downloads_today = user_stats.get('downloads_today', 0)
+            join_date = user_stats.get('joined_at')
+            
+            # Get full user data for premium info
+            user_data = db.get_user(user_id) or {}
+            is_premium = user_data.get('is_premium', False)
+            premium_tier = user_data.get('premium_tier', 'free')
+            premium_until = user_data.get('premium_until')
+            
+            # Get remaining downloads
+            remaining_info = db.get_remaining_downloads(user_id) or {}
+            remaining = remaining_info.get('remaining', 0)
+            daily_limit = remaining_info.get('limit', 0)
+            
+            # Format join date safely
+            if join_date:
+                if isinstance(join_date, str):
+                    try:
+                        join_date = datetime.fromisoformat(join_date)
+                    except (ValueError, TypeError):
+                        join_date = datetime.utcnow()
+                days_member = (datetime.utcnow() - join_date).days
+            else:
+                join_date = datetime.utcnow()
+                days_member = 0
+            
+            # Handle premium_until datetime conversion safely
+            premium_until_str = ''
+            if is_premium and premium_until:
+                if isinstance(premium_until, str):
+                    try:
+                        premium_until = datetime.fromisoformat(premium_until)
+                    except (ValueError, TypeError):
+                        premium_until = None
+                
+                if premium_until:
+                    premium_until_str = f"✅ Valid Until: **{premium_until.strftime('%d %B %Y')}**"
+            
+            # Create tier emoji
+            tier_emoji = {'bronze': '🥉', 'gold': '🥈', 'diamond': '💎', 'free': '🆓'}.get(premium_tier, '🆓')
+            premium_badge = f"{tier_emoji} **{premium_tier.upper()} TIER**"
+            
+            # Format tier info
+            tier_info_map = {
+                'bronze': '🥉 Bronze (100 downloads/day)',
+                'gold': '🥈 Gold (500 downloads/day)',
+                'diamond': '💎 Diamond (UNLIMITED downloads)',
+                'free': '🆓 Free (5 downloads/day)'
+            }
+            tier_info = tier_info_map.get(premium_tier, '🆓 Free (5 downloads/day)')
+            
+            stats_msg = f"""{premium_badge}
 
 📊 **Your Statistics**
 
@@ -795,19 +812,29 @@ Hi {user.first_name}!
 ⏳ Days as Member: **{days_member}**
 
 💎 **Premium Tier:** {tier_info}
-{'✅ Valid Until: **' + premium_until.strftime('%d %B %Y') + '**' if premium_until and is_premium else ''}
+{premium_until_str}
 ⬇️ **Today's Remaining:** **{remaining}** downloads
 
 {'⚡ Enjoy premium benefits!' if is_premium else '💡 Tip: Upgrade to Premium for more downloads and priority processing!'}
 """
-        
-        keyboard = [[InlineKeyboardButton("🏆 TOP USERS", callback_data="top_users")],
-                    [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_main")]]
-        
-        if update.message:
-            await update.message.reply_text(stats_msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-        else:
-            await update.callback_query.edit_message_text(stats_msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+            
+            keyboard = [[InlineKeyboardButton("🏆 TOP USERS", callback_data="top_users")],
+                        [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_main")]]
+            
+            if update.message:
+                await update.message.reply_text(stats_msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await update.callback_query.edit_message_text(stats_msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            logger.error(f"Error in stats_command: {e}", exc_info=True)
+            error_msg = "❌ Error retrieving statistics. Please try again."
+            try:
+                if update.message:
+                    await update.message.reply_text(error_msg)
+                else:
+                    await update.callback_query.edit_message_text(error_msg)
+            except:
+                pass
     
     async def top_users_display(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Display top premium users leaderboard"""
@@ -1008,28 +1035,26 @@ Current Status: {'✅ Active' if is_premium else '❌ Inactive'}
 • ⚡ Faster Processing
 • 🎯 Bulk Download Support
 
-💰 Price: Free for first 30 days trial!
+💰 **Contact admin for premium pricing and activation**
 """
         
         await query.edit_message_text(premium_msg, parse_mode='Markdown', reply_markup=self.get_premium_keyboard())
     
     async def activate_premium(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle premium activation"""
+        """Handle premium activation - no free trial, payment required"""
         query = update.callback_query
-        user_id = query.from_user.id
         
-        # Set premium for 30 days
-        premium_until = datetime.now() + timedelta(days=30)
-        db.set_premium(user_id, True, premium_until)
-        
-        activate_msg = """✅ **Premium Activated!**
+        activate_msg = """❌ **Free Trial Removed**
 
-🎉 You now have 30 days of Premium access!
+Premium access now requires payment.
 
-🔄 Auto-Upload Feature is ready to use.
-Visit the Premium menu to set up your channel.
+💳 **To activate premium:**
+1. Click "Get Premium" button
+2. Complete payment
+3. Send screenshot to admin
+4. Admin will verify and activate your account
 
-Thank you for supporting us! 💖
+No free trials available anymore.
 """
         
         await query.edit_message_text(activate_msg, parse_mode='Markdown', reply_markup=self.get_back_keyboard())
