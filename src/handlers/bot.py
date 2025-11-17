@@ -83,21 +83,23 @@ class TeraboxBot:
     
     async def check_quota_and_download(self, user_id: int, url: str, 
                                        context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """Check if user can download (quota) and process if allowed"""
-        # Check daily quota
+        """Check if user can download (quota) based on tier and process if allowed"""
+        # Check daily quota using tier-based limits
         if db.check_quota_exceeded(user_id):
-            user_data = db.get_user(user_id)
-            is_premium = user_data.get('is_premium', False) if user_data else False
+            remaining_info = db.get_remaining_downloads(user_id)
+            tier = remaining_info.get('tier', 'free')
+            daily_limit = remaining_info.get('limit', 5)
             
-            daily_limit = int(os.getenv('PREMIUM_DAILY_DOWNLOADS', 100)) \
-                if is_premium else int(os.getenv('FREE_DAILY_DOWNLOADS', 5))
+            tier_name = {'bronze': '🥉 Bronze', 'gold': '🥈 Gold', 'diamond': '💎 Diamond', 'free': '🆓 Free'}.get(tier, 'Free')
             
             await context.bot.send_message(
                 chat_id=user_id,
                 text=f"❌ **Daily Quota Exceeded**\n\n"
-                     f"You have reached your daily download limit of {daily_limit}.\n\n"
-                     f"Your quota will reset at midnight UTC."
-                     f"{'' if is_premium else '\n\n⭐ Upgrade to Premium for 100+ downloads/day!'}"
+                     f"Tier: {tier_name}\n"
+                     f"Daily Limit: {daily_limit if daily_limit != 999999 else 'UNLIMITED'}\n\n"
+                     f"You have reached your daily download limit.\n"
+                     f"Your quota will reset at midnight UTC.\n\n"
+                     f"{'⭐ Contact admin for premium upgrade!' if tier == 'free' else '✨ Premium Tier Active'}"
             )
             return False
         
@@ -196,6 +198,141 @@ Hi {user.first_name}!
     async def stats_command_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /stats command"""
         await self.stats_command(update, context)
+    
+    def is_admin(self, user_id: int) -> bool:
+        """Check if user is admin"""
+        admin_id = int(os.getenv('ADMIN_ID', 0))
+        return user_id == admin_id and admin_id != 0
+    
+    async def add_premium_bronze_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /add_pre_bronze command - Give Bronze tier (100 downloads/day)"""
+        if not self.is_admin(update.message.from_user.id):
+            await update.message.reply_text("❌ This command is only for admins.")
+            return
+        
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                "Usage: /add_pre_bronze <user_id> [days]\n"
+                "Example: /add_pre_bronze 123456789\n"
+                "Example: /add_pre_bronze 123456789 30"
+            )
+            return
+        
+        try:
+            target_user_id = int(context.args[0])
+            days = int(context.args[1]) if len(context.args) > 1 else 30
+            
+            db.set_premium_tier(target_user_id, 'bronze', days)
+            
+            # Notify user
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text="🥉 **Bronze Premium Activated!**\n\n"
+                         "📊 Daily Limit: 100 downloads/day\n"
+                         f"⏱️ Valid for: {days} days\n\n"
+                         "Enjoy your downloads! 🎉",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.warning(f"Could not notify user {target_user_id}: {e}")
+            
+            await update.message.reply_text(
+                f"✅ Bronze tier granted to user {target_user_id} for {days} days\n"
+                f"📊 Limit: 100 downloads/day"
+            )
+            logger.info(f"Admin {update.message.from_user.id} gave Bronze tier to {target_user_id}")
+        
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID or days format. Use numbers only.")
+    
+    async def add_premium_gold_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /add_pre_gold command - Give Gold tier (500 downloads/day)"""
+        if not self.is_admin(update.message.from_user.id):
+            await update.message.reply_text("❌ This command is only for admins.")
+            return
+        
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                "Usage: /add_pre_gold <user_id> [days]\n"
+                "Example: /add_pre_gold 123456789\n"
+                "Example: /add_pre_gold 123456789 30"
+            )
+            return
+        
+        try:
+            target_user_id = int(context.args[0])
+            days = int(context.args[1]) if len(context.args) > 1 else 30
+            
+            db.set_premium_tier(target_user_id, 'gold', days)
+            
+            # Notify user
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text="🥈 **Gold Premium Activated!**\n\n"
+                         "📊 Daily Limit: 500 downloads/day\n"
+                         f"⏱️ Valid for: {days} days\n\n"
+                         "🔄 Auto-upload feature unlocked!\n"
+                         "Enjoy premium downloads! 🎉",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.warning(f"Could not notify user {target_user_id}: {e}")
+            
+            await update.message.reply_text(
+                f"✅ Gold tier granted to user {target_user_id} for {days} days\n"
+                f"📊 Limit: 500 downloads/day"
+            )
+            logger.info(f"Admin {update.message.from_user.id} gave Gold tier to {target_user_id}")
+        
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID or days format. Use numbers only.")
+    
+    async def add_premium_diamond_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /add_pre_diamond command - Give Diamond tier (unlimited downloads)"""
+        if not self.is_admin(update.message.from_user.id):
+            await update.message.reply_text("❌ This command is only for admins.")
+            return
+        
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text(
+                "Usage: /add_pre_diamond <user_id> [days]\n"
+                "Example: /add_pre_diamond 123456789\n"
+                "Example: /add_pre_diamond 123456789 30"
+            )
+            return
+        
+        try:
+            target_user_id = int(context.args[0])
+            days = int(context.args[1]) if len(context.args) > 1 else 30
+            
+            db.set_premium_tier(target_user_id, 'diamond', days)
+            
+            # Notify user
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text="💎 **Diamond Premium Activated!**\n\n"
+                         "🚀 Daily Limit: UNLIMITED downloads!\n"
+                         f"⏱️ Valid for: {days} days\n\n"
+                         "👑 VIP Status Unlocked!\n"
+                         "🔄 Auto-upload + All Premium Features\n"
+                         "✨ Direct priority support\n\n"
+                         "Enjoy unlimited downloads! 🎉",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.warning(f"Could not notify user {target_user_id}: {e}")
+            
+            await update.message.reply_text(
+                f"✅ Diamond tier granted to user {target_user_id} for {days} days\n"
+                f"🚀 Limit: UNLIMITED"
+            )
+            logger.info(f"Admin {update.message.from_user.id} gave Diamond tier to {target_user_id}")
+        
+        except ValueError:
+            await update.message.reply_text("❌ Invalid user ID or days format. Use numbers only.")
     
     def extract_terabox_links(self, text: str) -> List[str]:
         """Extract all Terabox links from text
@@ -620,15 +757,32 @@ Hi {user.first_name}!
         # Get full user data for premium info
         user_data = db.get_user(user_id)
         is_premium = user_data.get('is_premium', False)
+        premium_tier = user_data.get('premium_tier', 'free')
         premium_until = user_data.get('premium_until', None)
+        
+        # Get remaining downloads
+        remaining_info = db.get_remaining_downloads(user_id)
+        remaining = remaining_info.get('remaining', 0)
+        daily_limit = remaining_info.get('limit', 0)
         
         # Format join date
         if isinstance(join_date, str):
             join_date = datetime.fromisoformat(join_date)
         days_member = (datetime.now() - join_date).days if join_date else 0
         
-        # Create stats message with premium badge
-        premium_badge = "⭐ **PREMIUM USER** ⭐" if is_premium else "🆓 **FREE USER**"
+        # Create tier emoji
+        tier_emoji = {'bronze': '🥉', 'gold': '🥈', 'diamond': '💎', 'free': '🆓'}.get(premium_tier, '🆓')
+        premium_badge = f"{tier_emoji} **{premium_tier.upper()} TIER**"
+        
+        # Format tier info
+        if premium_tier == 'bronze':
+            tier_info = "🥉 Bronze (100 downloads/day)"
+        elif premium_tier == 'gold':
+            tier_info = "🥈 Gold (500 downloads/day)"
+        elif premium_tier == 'diamond':
+            tier_info = "💎 Diamond (UNLIMITED downloads)"
+        else:
+            tier_info = "🆓 Free (5 downloads/day)"
         
         stats_msg = f"""{premium_badge}
 
@@ -636,13 +790,15 @@ Hi {user.first_name}!
 
 👤 User ID: `{user_id}`
 📥 Total Downloads: **{downloads_count}**
-📊 Today's Downloads: **{downloads_today}**
+📊 Today's Downloads: **{downloads_today}** / {daily_limit}
 📅 Member Since: **{join_date.strftime('%d %B %Y') if join_date else 'Unknown'}**
 ⏳ Days as Member: **{days_member}**
 
-{'✅ Premium Until: **' + premium_until.strftime('%d %B %Y') + '**' if premium_until and is_premium else ''}
+💎 **Premium Tier:** {tier_info}
+{'✅ Valid Until: **' + premium_until.strftime('%d %B %Y') + '**' if premium_until and is_premium else ''}
+⬇️ **Today's Remaining:** **{remaining}** downloads
 
-{'⚡ Priority processing enabled' if is_premium else '💡 Tip: Upgrade to Premium for priority processing!'}
+{'⚡ Enjoy premium benefits!' if is_premium else '💡 Tip: Upgrade to Premium for more downloads and priority processing!'}
 """
         
         keyboard = [[InlineKeyboardButton("🏆 TOP USERS", callback_data="top_users")],
@@ -1079,6 +1235,12 @@ Use the buttons below to access features:
         self.app.add_handler(conv_handler)
         self.app.add_handler(CommandHandler("help", self.help_command))
         self.app.add_handler(CommandHandler("stats", self.stats_command_handler))
+        
+        # Premium tier admin commands
+        self.app.add_handler(CommandHandler("add_pre_bronze", self.add_premium_bronze_command))
+        self.app.add_handler(CommandHandler("add_pre_gold", self.add_premium_gold_command))
+        self.app.add_handler(CommandHandler("add_pre_diamond", self.add_premium_diamond_command))
+        
         self.app.add_handler(CallbackQueryHandler(self.button_callback))
         
         # Photo handler for payment screenshots (high priority, before text handler)
@@ -1097,6 +1259,16 @@ Use the buttons below to access features:
             BotCommand("help", "Show help message"),
             BotCommand("cancel", "Cancel current operation"),
         ]
+        
+        # Add admin commands
+        admin_id = int(os.getenv('ADMIN_ID', 0))
+        if admin_id:
+            commands.extend([
+                BotCommand("add_pre_bronze", "Grant Bronze tier (100/day) - ADMIN"),
+                BotCommand("add_pre_gold", "Grant Gold tier (500/day) - ADMIN"),
+                BotCommand("add_pre_diamond", "Grant Diamond tier (unlimited) - ADMIN"),
+            ])
+        
         await self.app.bot.set_my_commands(commands)
     
     async def start(self) -> None:

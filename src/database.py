@@ -424,6 +424,113 @@ class Database:
             logger.error(f"Error getting expiry time: {e}")
             return {'expires_in_days': 0, 'expires_at': None, 'is_premium': False}
 
+    # ============= PREMIUM TIER SYSTEM =============
+    
+    def set_premium_tier(self, user_id: int, tier: str, days: int = 30) -> bool:
+        """
+        Set user's premium tier (bronze, gold, diamond)
+        tier: 'bronze' (100/day), 'gold' (500/day), 'diamond' (unlimited)
+        """
+        try:
+            valid_tiers = ['bronze', 'gold', 'diamond']
+            if tier not in valid_tiers:
+                logger.error(f"Invalid tier: {tier}")
+                return False
+            
+            premium_until = datetime.utcnow() + timedelta(days=days)
+            
+            self.users_collection.update_one(
+                {'user_id': user_id},
+                {
+                    '$set': {
+                        'is_premium': True,
+                        'premium_tier': tier,
+                        'premium_until': premium_until,
+                        'tier_activated_at': datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+            logger.info(f"Set user {user_id} to {tier} tier until {premium_until}")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting premium tier for {user_id}: {e}")
+            return False
+
+    def get_premium_tier(self, user_id: int) -> str:
+        """Get user's premium tier or 'free' if not premium"""
+        try:
+            user = self.users_collection.find_one({'user_id': user_id})
+            if user:
+                is_premium = user.get('is_premium', False)
+                if is_premium:
+                    tier = user.get('premium_tier', 'gold')  # Default to gold if not set
+                    premium_until = user.get('premium_until')
+                    
+                    # Check if premium expired
+                    if premium_until and datetime.utcnow() > premium_until:
+                        # Auto-downgrade
+                        self.users_collection.update_one(
+                            {'user_id': user_id},
+                            {'$set': {'is_premium': False, 'premium_tier': None}}
+                        )
+                        return 'free'
+                    
+                    return tier
+            return 'free'
+        except Exception as e:
+            logger.error(f"Error getting premium tier for {user_id}: {e}")
+            return 'free'
+
+    def get_daily_limit(self, user_id: int) -> int:
+        """Get user's daily download limit based on tier"""
+        tier = self.get_premium_tier(user_id)
+        
+        limits = {
+            'bronze': 100,
+            'gold': 500,
+            'diamond': float('inf'),  # Unlimited
+            'free': int(os.getenv('FREE_DAILY_DOWNLOADS', 5))
+        }
+        
+        limit = limits.get(tier, 5)
+        return int(limit) if limit != float('inf') else 999999
+
+    def get_remaining_downloads(self, user_id: int) -> dict:
+        """Get remaining downloads for user today"""
+        try:
+            user = self.users_collection.find_one({'user_id': user_id})
+            if not user:
+                limit = self.get_daily_limit(user_id)
+                return {'remaining': limit, 'limit': limit, 'used': 0}
+            
+            # Reset daily counter if needed
+            last_reset = user.get('last_download_reset', datetime.utcnow())
+            if (datetime.utcnow() - last_reset).days >= 1:
+                self.reset_daily_quota(user_id)
+                limit = self.get_daily_limit(user_id)
+                return {'remaining': limit, 'limit': limit, 'used': 0}
+            
+            limit = self.get_daily_limit(user_id)
+            used = user.get('downloads_today', 0)
+            
+            tier = self.get_premium_tier(user_id)
+            if tier == 'diamond':
+                remaining = 999999  # Show "Unlimited"
+            else:
+                remaining = max(0, limit - used)
+            
+            return {
+                'remaining': remaining,
+                'limit': limit,
+                'used': used,
+                'tier': tier
+            }
+        except Exception as e:
+            logger.error(f"Error getting remaining downloads: {e}")
+            limit = self.get_daily_limit(user_id)
+            return {'remaining': limit, 'limit': limit, 'used': 0}
+
 
 # Global database instance
 db = Database()
