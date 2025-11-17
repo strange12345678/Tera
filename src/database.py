@@ -548,6 +548,86 @@ class Database:
             limit = self.get_daily_limit(user_id)
             return {'remaining': limit, 'limit': limit, 'used': 0}
 
+    # ============= ERROR CHANNEL MANAGEMENT =============
+    
+    def set_error_channel(self, user_id: int, channel_id: int) -> bool:
+        """Set error channel for failed downloads (Gold/Diamond only)"""
+        try:
+            self.users_collection.update_one(
+                {'user_id': user_id},
+                {'$set': {'error_channel': channel_id}},
+                upsert=True
+            )
+            logger.info(f"Set error channel {channel_id} for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting error channel for {user_id}: {e}")
+            return False
+    
+    def get_error_channel(self, user_id: int) -> Optional[int]:
+        """Get error channel for user"""
+        try:
+            user = self.users_collection.find_one({'user_id': user_id})
+            if user:
+                return user.get('error_channel')
+            return None
+        except Exception as e:
+            logger.error(f"Error getting error channel for {user_id}: {e}")
+            return None
+    
+    def remove_error_channel(self, user_id: int) -> bool:
+        """Remove error channel"""
+        try:
+            self.users_collection.update_one(
+                {'user_id': user_id},
+                {'$unset': {'error_channel': 1}}
+            )
+            logger.info(f"Removed error channel for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing error channel for {user_id}: {e}")
+            return False
+    
+    # ============= AUTO CHANNEL MANAGEMENT =============
+    
+    def set_auto_channel(self, user_id: int, channel_id: int) -> bool:
+        """Set auto-upload channel for downloads (Gold/Diamond only)"""
+        try:
+            self.users_collection.update_one(
+                {'user_id': user_id},
+                {'$set': {'auto_channel': channel_id}},
+                upsert=True
+            )
+            logger.info(f"Set auto channel {channel_id} for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting auto channel for {user_id}: {e}")
+            return False
+    
+    def get_auto_channel(self, user_id: int) -> Optional[int]:
+        """Get auto-upload channel for user"""
+        try:
+            user = self.users_collection.find_one({'user_id': user_id})
+            if user:
+                return user.get('auto_channel')
+            return None
+        except Exception as e:
+            logger.error(f"Error getting auto channel for {user_id}: {e}")
+            return None
+    
+    def remove_auto_channel(self, user_id: int) -> bool:
+        """Remove auto-upload channel"""
+        try:
+            self.users_collection.update_one(
+                {'user_id': user_id},
+                {'$unset': {'auto_channel': 1}}
+            )
+            logger.info(f"Removed auto channel for user {user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error removing auto channel for {user_id}: {e}")
+            return False
+
 
 # Global database instance
 db = Database()

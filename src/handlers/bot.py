@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 
 import config
 from src.handlers.download import process_terabox_link
+from src.handlers.command import set_error_channel, remove_error_channel, set_auto_channel, remove_auto_channel
 from src.database import db
 
 # Configure logging
@@ -1266,6 +1267,12 @@ Use the buttons below to access features:
         self.app.add_handler(CommandHandler("add_pre_gold", self.add_premium_gold_command))
         self.app.add_handler(CommandHandler("add_pre_diamond", self.add_premium_diamond_command))
         
+        # Channel management commands (Gold/Diamond only)
+        self.app.add_handler(CommandHandler("set_error_channel", set_error_channel))
+        self.app.add_handler(CommandHandler("remove_error_channel", remove_error_channel))
+        self.app.add_handler(CommandHandler("set_auto_channel", set_auto_channel))
+        self.app.add_handler(CommandHandler("remove_auto_channel", remove_auto_channel))
+        
         self.app.add_handler(CallbackQueryHandler(self.button_callback))
         
         # Photo handler for payment screenshots (high priority, before text handler)
@@ -1283,6 +1290,11 @@ Use the buttons below to access features:
             BotCommand("stats", "Show your download statistics"),
             BotCommand("help", "Show help message"),
             BotCommand("cancel", "Cancel current operation"),
+            # Channel management commands (Gold/Diamond)
+            BotCommand("set_error_channel", "Set channel for failed downloads (Gold/Diamond)"),
+            BotCommand("remove_error_channel", "Remove error channel (Gold/Diamond)"),
+            BotCommand("set_auto_channel", "Set channel for auto-upload (Gold/Diamond)"),
+            BotCommand("remove_auto_channel", "Remove auto-upload channel (Gold/Diamond)"),
         ]
         
         # Add admin commands
