@@ -33,5 +33,10 @@ DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "./downloads")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 2147483648))  # 2GB default
 TIMEOUT = int(os.getenv("TIMEOUT", 30))
 
+# File size constants
+MAX_TELEGRAM_FILE_SIZE_MB = 2000  # Telegram bot API limit
+MIN_VALID_FILE_SIZE_BYTES = 1000  # Files smaller than this are likely errors
+HTTP_CHUNK_SIZE = 65536  # 64KB chunks for HTTP downloads
+
 # Bot Configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG")

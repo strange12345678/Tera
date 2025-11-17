@@ -3,7 +3,7 @@ MongoDB database module for user management
 """
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError, DuplicateKeyError
@@ -60,10 +60,18 @@ class Database:
                 'joined_at': datetime.utcnow(),
                 'last_active': datetime.utcnow(),
                 'downloads_count': 0,
+                'downloads_today': 0,
+                'last_download_reset': datetime.utcnow(),
                 'is_premium': False,
+                'premium_tier': 'free',
                 'premium_until': None,
+                'premium_days_purchased': 0,
+                'total_investment': 0.0,
                 'auto_upload_channel': None,  # For premium users to save their channel
                 'auto_upload_enabled': False,  # Premium feature flag
+                'preferred_quality': 'auto',
+                'auto_rename_pattern': None,
+                'download_history': [],
             }
             self.users_collection.insert_one(user_data)
             logger.info(f"Added new user: {user_id}")
@@ -124,16 +132,25 @@ class Database:
         try:
             user = self.users_collection.find_one({'user_id': user_id})
             if user:
+                # Reset daily counter if needed
+                last_reset = user.get('last_download_reset', datetime.utcnow())
+                if (datetime.utcnow() - last_reset).days >= 1:
+                    self.reset_daily_quota(user_id)
+                    downloads_today = 0
+                else:
+                    downloads_today = user.get('downloads_today', 0)
+                
                 return {
                     'user_id': user.get('user_id'),
                     'joined_at': user.get('joined_at'),
                     'downloads_count': user.get('downloads_count', 0),
+                    'downloads_today': downloads_today,
                     'last_active': user.get('last_active'),
                 }
-            return None
+            return {'user_id': user_id, 'joined_at': None, 'downloads_count': 0, 'downloads_today': 0, 'last_active': None}
         except Exception as e:
             logger.error(f"Error fetching user stats for {user_id}: {e}")
-            return None
+            return {'user_id': user_id, 'joined_at': None, 'downloads_count': 0, 'downloads_today': 0, 'last_active': None}
     
     def get_total_users(self) -> int:
         """Get total number of users"""

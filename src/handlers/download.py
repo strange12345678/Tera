@@ -6,6 +6,7 @@ import re
 import logging
 import aiohttp
 import asyncio
+import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
@@ -287,6 +288,15 @@ async def download_video(stream_url: str, filename: str) -> Optional[str]:
         return None
 
 
+def check_ffmpeg_available() -> bool:
+    """Check if FFmpeg is available on the system"""
+    try:
+        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 async def _download_direct_http(stream_url: str, file_path: str, filename: str) -> Optional[str]:
     """
     Download video via direct HTTP request
@@ -350,7 +360,10 @@ async def _download_m3u8_with_ffmpeg(stream_url: str, file_path: str, filename: 
     Download M3U8 HLS stream using FFmpeg
     """
     try:
-        import subprocess
+        # Check if FFmpeg is available
+        if not check_ffmpeg_available():
+            logger.error("FFmpeg is not installed on the system")
+            return None
         
         # FFmpeg command to download M3U8 stream
         # -allowed_extensions ALL: Allow any extension in playlist
@@ -367,7 +380,6 @@ async def _download_m3u8_with_ffmpeg(stream_url: str, file_path: str, filename: 
             '-loglevel', 'info',
             file_path
         ]
-        
         logger.info(f"Running FFmpeg: {' '.join(cmd)}")
         
         # Run FFmpeg as subprocess
