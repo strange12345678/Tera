@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 
 import config
 from src.handlers.download import process_terabox_link
-from src.handlers.command import set_error_channel, remove_error_channel, set_auto_channel, remove_auto_channel
+from src.handlers.command import handle_set_error_channel, handle_remove_error_channel, handle_set_auto_channel, handle_remove_auto_channel
 from src.database import db
 
 # Configure logging
@@ -38,6 +38,39 @@ WAITING_FOR_LINK = 1
 
 
 class TeraboxBot:
+        async def set_error_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            user_id = update.message.from_user.id
+            if not context.args or len(context.args) < 1:
+                await update.message.reply_text("Usage: /set_error_channel [channel_id]")
+                return
+            channel_id = context.args[0]
+            result = handle_set_error_channel(user_id, channel_id)
+            await update.message.reply_text(result)
+
+        async def remove_error_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            user_id = update.message.from_user.id
+            result = handle_remove_error_channel(user_id, None)
+            await update.message.reply_text(result)
+
+        async def set_auto_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            user_id = update.message.from_user.id
+            if not context.args or len(context.args) < 1:
+                await update.message.reply_text("Usage: /set_auto_channel [channel_id]")
+                return
+            channel_id = context.args[0]
+            result = handle_set_auto_channel(user_id, channel_id)
+            await update.message.reply_text(result)
+
+        async def remove_auto_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            user_id = update.message.from_user.id
+            result = handle_remove_auto_channel(user_id, None)
+            await update.message.reply_text(result)
+
+        def add_command_handlers(self, app):
+            app.add_handler(CommandHandler("set_error_channel", self.set_error_channel_command))
+            app.add_handler(CommandHandler("remove_error_channel", self.remove_error_channel_command))
+            app.add_handler(CommandHandler("set_auto_channel", self.set_auto_channel_command))
+            app.add_handler(CommandHandler("remove_auto_channel", self.remove_auto_channel_command))
     """Telegram bot for downloading Terabox videos"""
     
     def __init__(self, token: str):
