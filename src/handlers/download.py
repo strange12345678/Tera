@@ -436,79 +436,28 @@ async def _download_m3u8_with_ffmpeg(stream_url: str, file_path: str, filename: 
 
 async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
     """
-    Process a Terabox link using the iTeraPlay API endpoint.
+    Main pipeline: validate -> fetch stream -> download
     Returns: (file_path, filename) or (None, None) if failed
     """
-    # Use the primary iTeraPlay API from config
-    api_url = config.TERABOX_API.format(url=url)
-    logger.info(f"Processing Terabox link: {url} using API: {api_url}")
+    logger.info(f"[PROCESS] Starting for: {url[:60]}")
     
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
-                logger.info(f"API Response Status: {response.status}")
-                logger.info(f"Response Content-Type: {response.content_type}")
-                logger.info(f"Response Content-Length: {response.content_length}")
-                
-                if response.status == 200:
-                    content_type = response.content_type or ""
-                    
-                    # If it's HTML, it's an error page
-                    if "text/html" in content_type.lower():
-                        logger.error("API returned HTML error page")
-                        return None, None
-                    
-                    # Try to parse JSON response first
-                    try:
-                        data = await response.json()
-                        logger.info(f"API returned JSON: {str(data)[:200]}")
-                        
-                        file_url = data.get("file_url") or data.get("url") or data.get("play_url") or data.get("stream_url")
-                        filename = data.get("filename", "terabox_video.mp4")
-                        
-                        if not file_url:
-                            logger.error("API response did not contain a valid file URL")
-                            logger.debug(f"API response data: {data}")
-                            return None, None
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # If not JSON, treat as direct video stream if content looks like video
-                        logger.info("Treating response as direct video stream")
-                        file_url = api_url
-                        filename = "terabox_video.mp4"
-                    
-                    # Validate file URL
-                    if not isinstance(file_url, str) or not file_url.startswith(('http://', 'https://')):
-                        logger.error(f"Invalid file URL received from API: {file_url}")
-                        return None, None
-                    
-                    # Download the file
-                    downloads_dir = Path("downloads")
-                    downloads_dir.mkdir(exist_ok=True)
-                    
-                    # Clean filename
-                    filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-                    if not filename.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
-                        filename += '.mp4'
-                    
-                    file_path = downloads_dir / filename
-                    
-                    # Download the video file
-                    file_path = await _download_direct_http(file_url, str(file_path), filename)
-                    
-                    if file_path:
-                        return file_path, filename
-                    else:
-                        logger.error("Failed to download video from API URL")
-                        return None, None
-                else:
-                    response_text = await response.text()
-                    logger.error(f"API returned status code {response.status}")
-                    logger.debug(f"Response: {response_text[:300]}")
-                    return None, None
-    except asyncio.TimeoutError:
-        logger.error(f"API request to {api_url} timed out")
+    # Validate
+    terabox_url = await extract_terabox_url(url)
+    if not terabox_url:
+        logger.warning(f"[PROCESS] Invalid URL")
         return None, None
-    except Exception as e:
-        logger.exception(f"Error processing Terabox link: {e}")
+    
+    # Fetch stream URL using the iTeraPlay API with fallbacks
+    stream_url, filename = await fetch_stream_url(terabox_url)
+    if not stream_url:
+        logger.warning(f"[PROCESS] Failed to fetch stream")
         return None, None
+    
+    # Download
+    file_path = await download_video(stream_url, filename)
+    if not file_path:
+        logger.warning(f"[PROCESS] Failed to download")
+        return None, None
+    
+    logger.info(f"[PROCESS] Complete")
+    return file_path, filename
