@@ -397,153 +397,28 @@ Hi {user.first_name}!
         logger.debug(f"Final unique links: {unique_links}")
         return unique_links
 
-    async def handle_forwarded_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle forwarded messages with Terabox links"""
-        # Forwarded messages have text just like regular messages
-        user_message = update.message.text
-        if not user_message:
-            logger.debug(f"Forwarded message has no text, skipping")
-            return
-        
-        user_id = update.message.from_user.id
-        logger.info(f"User {user_id} forwarded message: {user_message[:50]}...")
-        
-        # Show typing indicator
-        await update.message.chat.send_action(ChatAction.TYPING)
-        
-        # Extract links
-        links = self.extract_terabox_links(user_message)
-        if not links:
-            logger.debug(f"No Terabox links found in forwarded message")
-            return
-        
-        logger.info(f"Found {len(links)} Terabox link(s) in forwarded message")
-        
-        # Check quota before processing
-        if not await self.check_quota_and_download(user_id, links[0], context):
-            return
-        
-        # Process links
-        for link in links:
-            try:
-                processing_msg = await update.message.reply_text(
-                    "⏳ **Processing forwarded link...**\n\n"
-                    f"🔗 {link[:50]}...\n\n"
-                    "Downloading and preparing video..."
-                )
-                
-                logger.info(f"Processing forwarded link: {link}")
-                
-                file_path, filename = await process_terabox_link(link)
-
-                if not file_path:
-                    logger.warning(f"Failed to process forwarded link: {link}")
-                    error_text = (
-                        "❌ **Download Failed**\n\n"
-                        "Could not extract video from the link.\n\n"
-                        "Please check if the link is valid and try again."
-                    )
-                    await processing_msg.edit_text(error_text)
-                    error_channel = db.get_error_channel(user_id)
-                    if error_channel:
-                        try:
-                            await self.app.bot.send_message(
-                                chat_id=error_channel,
-                                text=f"❌ Failed download for user {user_id}:\n{link}\n\n{error_text}",
-                                parse_mode='Markdown'
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to forward error to error channel: {e}")
-                    continue
-
-                # Check file size
-                file_size = os.path.getsize(file_path)
-                file_size_mb = file_size / (1024 * 1024)
-
-                if file_size_mb > config.MAX_TELEGRAM_FILE_SIZE_MB:
-                    logger.warning(f"File size {file_size_mb} MB exceeds Telegram limit.")
-                    error_text = (
-                        "❌ **Download Failed**\n\n"
-                        "The file size exceeds Telegram's limit of 2GB.\n\n"
-                        "Please try a smaller file."
-                    )
-                    await processing_msg.edit_text(error_text)
-                    try:
-                        os.remove(file_path)
-                    except:
-                        pass
-                    continue
-
-                # Send file
-                try:
-                    with open(file_path, 'rb') as f:
-                        await context.bot.send_video(
-                            chat_id=user_id,
-                            video=f,
-                            filename=filename,
-                            caption=f"✅ **Download Complete!**\n\n{filename}"
-                        )
-
-                    logger.info(f"Successfully sent file from forwarded message: {filename} to user {user_id}")
-                    
-                    await processing_msg.edit_text(
-                        "✅ **Download Complete**\n\n"
-                        f"📹 {filename}\n"
-                        f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                        "✔️ Video sent successfully!"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send file from forwarded message: {e}")
-                    await processing_msg.edit_text("❌ Failed to send file. Please try again.")
-                
-                # Clean up
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Cleaned up: {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to clean up {file_path}: {e}")
-                
-                # Add to history
-                db.add_to_history(user_id, filename, file_size, link)
-                
-            except Exception as e:
-                logger.error(f"Error processing forwarded link {link}: {e}")
-                error_text = (
-                    f"❌ **An Error Occurred**\n\n"
-                    f"Error: {str(e)}\n\n"
-                    "Please try again."
-                )
-                try:
-                    await processing_msg.edit_text(error_text)
-                except:
-                    pass
-                error_channel = db.get_error_channel(user_id)
-                if error_channel:
-                    try:
-                        await self.app.bot.send_message(
-                            chat_id=error_channel,
-                            text=f"❌ Failed download for user {user_id}:\n{link}\n\n{error_text}",
-                            parse_mode='Markdown'
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to forward error to error channel: {e}")
-                continue
-    
     async def handle_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-        """Handle incoming message with Terabox links"""
+        """Handle incoming message with Terabox links (including forwarded messages)"""
         # Handle both regular and forwarded messages
         user_message = update.message.text
         
-        # If message is None, it might be a forwarded message, photo caption, etc.
+        logger.info(f"[HANDLE_LINK] Called for user {update.message.from_user.id}, is_forwarded={update.message.is_forwarded()}, text={user_message[:50] if user_message else None}...")
+        
+        # Special handling for forwarded messages
+        if update.message.is_forwarded():
+            logger.info(f"[HANDLE_LINK] Message is forwarded from {update.message.forward_origin}")
+            # For forwarded messages without text, Telegram doesn't preserve original content
+            if not user_message:
+                logger.debug(f"Forwarded message has no text")
+                await update.message.reply_text(
+                    "❌ Forwarded message has no text.\n\n"
+                    "Please forward a message that contains a Terabox link."
+                )
+                return WAITING_FOR_LINK
+        
+        # If message is still None, try to get caption if message has one
         if not user_message:
-            # Try to get text from forwarded message
-            if update.message.forward_origin:
-                logger.debug(f"Message is forwarded from {update.message.forward_origin}")
-                # For forwarded messages, Telegram doesn't preserve the original text directly
-                # We need to handle this case - for now just inform user
-                user_message = None
-            # Try to get caption if message has one
-            elif update.message.caption:
+            if update.message.caption:
                 user_message = update.message.caption
             else:
                 user_message = None
@@ -1445,10 +1320,7 @@ Use the buttons below to access features:
         # Photo handler for payment screenshots (high priority, before text handler)
         self.app.add_handler(MessageHandler(filters.PHOTO, self.handle_payment_screenshot))
         
-        # Handler for forwarded messages with links (outside conversation, higher priority)
-        self.app.add_handler(MessageHandler(filters.FORWARDED & filters.TEXT, self.handle_forwarded_message))
-        
-        # Regular text and caption handlers
+        # Regular text and caption handlers (removed forwarded handler - handled inside handle_link instead)
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_link))
         # Also handle captions from media (photo, document, video, etc.) outside conversation
         self.app.add_handler(MessageHandler(filters.CAPTION, self.handle_link_from_caption))
