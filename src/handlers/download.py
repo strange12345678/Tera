@@ -146,6 +146,11 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                 text = await response.text()
                 logger.debug(f"Response text length: {len(text)} bytes")
                 
+                # Log a sample of the response for debugging
+                if len(text) > 0:
+                    logger.debug(f"Response sample (first 500 chars): {text[:500]}")
+                    logger.debug(f"Response sample (last 500 chars): {text[-500:]}")
+                
                 # First priority: Look for videoQualities (standard TeraBox player format)
                 # Try different resolution options in order of preference
                 for resolution in ["360p", "480p", "720p", "1080p", "playUrl"]:
@@ -158,35 +163,41 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         filename = f'terabox_video_{resolution}.mp4'
                         logger.info(f"Found {resolution} stream URL: {stream_url[:80]}")
                         return stream_url, filename
+                    else:
+                        logger.debug(f"Resolution {resolution} not found in response")
                 
                 # Search for m3u8 (HLS stream) URLs - handle escaped JSON strings too
                 m3u8_patterns = [
                     r'(https?://[^\s"\'<>]*\.m3u8[^\s"\'<>]*)',  # plain URL
                         r'["\'](https?://[^"\']*?\.m3u8[^"\']*)["\']',  # m3u8 inside quotes (must be a URL)
                 ]
-                for pattern in m3u8_patterns:
+                for i, pattern in enumerate(m3u8_patterns):
                     m3u8_match = re.search(pattern, text)
                     if m3u8_match:
                         stream_url = m3u8_match.group(1)
                         # Unescape if necessary
                         stream_url = stream_url.replace('\\/', '/').replace('\\:', ':')
                         filename = 'terabox_video.mp4'
-                        logger.info(f"Found m3u8 stream URL: {stream_url[:80]}")
+                        logger.info(f"Found m3u8 stream URL (pattern {i}): {stream_url[:80]}")
                         return stream_url, filename
+                    else:
+                        logger.debug(f"m3u8 pattern {i} not found")
                 
                 # Search for mp4 URLs
                 mp4_patterns = [
                     r'(https?://[^\s"\'<>]*\.mp4[^\s"\'<>]*)',  # plain URL
                         r'["\'](https?://[^"\']*?\.mp4[^"\']*)["\']',  # mp4 inside quotes (must be a URL)
                 ]
-                for pattern in mp4_patterns:
+                for i, pattern in enumerate(mp4_patterns):
                     mp4_match = re.search(pattern, text)
                     if mp4_match:
                         stream_url = mp4_match.group(1)
                         stream_url = stream_url.replace('\\/', '/').replace('\\:', ':')
                         filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
-                        logger.info(f"Found mp4 stream URL: {stream_url[:80]}")
+                        logger.info(f"Found mp4 stream URL (pattern {i}): {stream_url[:80]}")
                         return stream_url, filename
+                    else:
+                        logger.debug(f"mp4 pattern {i} not found")
 
                 # If we couldn't extract from the iTeraPlay API response, try fetching the original Terabox page
                 logger.info("Attempting fallback: fetch Terabox page directly to extract stream URL")
@@ -202,6 +213,7 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         logger.info(f"Terabox page response status: {page_resp.status}")
                         if page_resp.status == 200:
                             page_text = await page_resp.text()
+                            logger.debug(f"Terabox page length: {len(page_text)} bytes")
 
                             # Try the same extraction logic on the page
                             for resolution in ["360p", "480p", "720p", "1080p", "playUrl"]:
@@ -214,22 +226,24 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                                     return stream_url, filename
 
                             # m3u8 on page
-                            for pattern in m3u8_patterns:
+                            for i, pattern in enumerate(m3u8_patterns):
                                 m3u8_match = re.search(pattern, page_text)
                                 if m3u8_match:
                                     stream_url = m3u8_match.group(1).replace('\\/', '/').replace('\\:', ':')
                                     filename = 'terabox_video.mp4'
-                                    logger.info(f"Found m3u8 stream URL on page: {stream_url[:80]}")
+                                    logger.info(f"Found m3u8 stream URL on page (pattern {i}): {stream_url[:80]}")
                                     return stream_url, filename
 
                             # mp4 on page
-                            for pattern in mp4_patterns:
+                            for i, pattern in enumerate(mp4_patterns):
                                 mp4_match = re.search(pattern, page_text)
                                 if mp4_match:
                                     stream_url = mp4_match.group(1).replace('\\/', '/').replace('\\:', ':')
                                     filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
-                                    logger.info(f"Found mp4 stream URL on page: {stream_url[:80]}")
+                                    logger.info(f"Found mp4 stream URL on page (pattern {i}): {stream_url[:80]}")
                                     return stream_url, filename
+                            
+                            logger.warning(f"No stream URLs found on Terabox page either")
                         else:
                             logger.warning(f"Terabox page returned status {page_resp.status}")
                 except Exception as e:
@@ -302,10 +316,19 @@ async def _download_direct_http(stream_url: str, file_path: str, filename: str) 
     Download video via direct HTTP request
     """
     try:
+        # Validate stream URL format first
+        if not stream_url or not isinstance(stream_url, str):
+            logger.error(f"Invalid stream URL: {stream_url}")
+            return None
+        
+        if not stream_url.startswith(('http://', 'https://')):
+            logger.error(f"Stream URL is not HTTP(S): {stream_url[:100]}")
+            return None
+        
         # Headers to mimic a browser
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://iteraplay.com/',
+            'Referer': 'https://terabox.com/',
             'Accept': '*/*',
             'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
@@ -344,22 +367,39 @@ async def _download_direct_http(stream_url: str, file_path: str, filename: str) 
                                 logger.debug(f"Downloaded {downloaded_size / (1024*1024):.1f}MB")
                 
                 file_size = os.path.getsize(file_path)
+                logger.info(f"Final file size: {file_size} bytes ({file_size/(1024*1024):.2f}MB)")
                 
                 # Validate that we got a real video file
-                if file_size < 1000:  # Less than 1KB is almost certainly not a real video
+                if file_size < 5000:  # Less than 5KB is almost certainly not a real video
                     logger.error(f"Downloaded file is suspiciously small: {file_size} bytes - likely dummy/error response")
                     os.remove(file_path)
                     return None
                 
-                # Read first few bytes to check if it's HTML (corruption check)
+                # Read first few bytes to check if it's HTML or error page (corruption check)
                 with open(file_path, 'rb') as f:
-                    header = f.read(100)
-                    if header.startswith(b'<!DOCTYPE') or header.startswith(b'<html') or b'<html' in header[:200]:
-                        logger.error(f"Downloaded file contains HTML - likely an error/login page")
+                    header = f.read(500)
+                    
+                    # Check for HTML signatures
+                    if any(sig in header for sig in [b'<!DOCTYPE', b'<html', b'<HTML', b'<?xml', b'<svg', b'<script', b'<meta', b'error', b'Error', b'ERROR']):
+                        logger.error(f"Downloaded file appears to be HTML/error page. First 200 bytes: {header[:200]}")
                         os.remove(file_path)
                         return None
+                    
+                    # Check for valid video file signatures
+                    valid_signatures = [
+                        b'\x00\x00\x00',  # MP4 ftyp
+                        b'RIFF',  # AVI
+                        b'\x1a\x45\xdf\xa3',  # WebM
+                        b'\xff\xfb',  # MP3
+                        b'\x49\x44\x33',  # ID3 (MP3 tag)
+                    ]
+                    
+                    is_valid = any(sig in header[:50] for sig in valid_signatures)
+                    
+                    if not is_valid:
+                        logger.warning(f"File signature not recognized as video. First bytes: {header[:50].hex()}")
                 
-                logger.info(f"Download complete: {filename} ({file_size} bytes / {file_size/(1024*1024):.1f}MB)")
+                logger.info(f"Download complete: {filename} ({file_size} bytes / {file_size/(1024*1024):.2f}MB)")
                 return file_path
                     
     except Exception as e:
