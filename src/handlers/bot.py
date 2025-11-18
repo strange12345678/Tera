@@ -379,8 +379,8 @@ Hi {user.first_name}!
         """
         # More flexible pattern that matches any terabox variant domain
         # Matches: terabox.com, 1024terabox.com, teraboxlink.com, etc.
-        # Pattern allows for numbers and dots in domain name
-        terabox_pattern = r'https?://(?:[a-zA-Z0-9]*\.)?terabox[a-zA-Z0-9]*\.com/(?:s|folder)/[a-zA-Z0-9_-]+'
+        # Pattern: [scheme]://[optional subdomain.]terabox[optional suffix].com/[s or folder]/[link-id]
+        terabox_pattern = r'https?://(?:[a-zA-Z0-9]+\.)*[a-zA-Z0-9]*terabox[a-zA-Z0-9]*\.com/(?:s|folder)/[a-zA-Z0-9_-]+'
         
         links = re.findall(terabox_pattern, text, re.IGNORECASE)
         
