@@ -392,13 +392,15 @@ async def _download_direct_http(stream_url: str, file_path: str, filename: str) 
                         os.remove(file_path)
                         return None
                     
-                    # Check for valid video file signatures
+                    # Check for valid video/media file signatures
                     valid_signatures = [
                         b'\x00\x00\x00',  # MP4 ftyp
                         b'RIFF',  # AVI
                         b'\x1a\x45\xdf\xa3',  # WebM
                         b'\xff\xfb',  # MP3
                         b'\x49\x44\x33',  # ID3 (MP3 tag)
+                        b'#EXT',  # M3U8/HLS playlist (starts with #EXTM3U)
+                        b'#EXTM3U',  # M3U8 full header
                     ]
                     
                     is_valid = any(sig in header[:50] for sig in valid_signatures)
