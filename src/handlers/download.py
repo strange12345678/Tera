@@ -436,11 +436,11 @@ async def _download_m3u8_with_ffmpeg(stream_url: str, file_path: str, filename: 
 
 async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
     """
-    Process a Terabox link using the /play API endpoint.
+    Process a Terabox link using the iTeraPlay API endpoint.
     Returns: (file_path, filename) or (None, None) if failed
     """
-    # Use only the /play endpoint
-    api_url = f"https://teraapi.boogafantastic.workers.dev/play?url={url}"
+    # Use the primary iTeraPlay API from config
+    api_url = config.TERABOX_API.format(url=url)
     logger.info(f"Processing Terabox link: {url} using API: {api_url}")
     
     try:
