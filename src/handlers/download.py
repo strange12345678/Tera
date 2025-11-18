@@ -16,6 +16,43 @@ import config
 logger = logging.getLogger(__name__)
 
 
+def is_valid_stream_url(url: str) -> bool:
+    """
+    Check if a URL looks like an actual media stream and not a Terabox page or error page
+    """
+    if not url or not isinstance(url, str):
+        return False
+    
+    # Reject URLs that are Terabox share links (these are not streams)
+    if 'terabox.com' in url.lower() or '1024terabox.com' in url.lower():
+        logger.debug(f"URL is a Terabox share link, not a stream: {url[:80]}")
+        return False
+    
+    # Accept URLs that are CDN/streaming domains (common video hosting)
+    streaming_domains = [
+        'teraboxapi',
+        'iteraplay',
+        'cloudflare',
+        'cdn',
+        'stream',
+        'video',
+        'media',
+        '.mp4',
+        '.m3u8',
+        '.flv',
+        '.mkv',
+        '.avi',
+    ]
+    
+    url_lower = url.lower()
+    for domain in streaming_domains:
+        if domain in url_lower:
+            return True
+    
+    logger.debug(f"URL doesn't match known streaming domains: {url[:80]}")
+    return False
+
+
 async def extract_terabox_url(url: str) -> Optional[str]:
     """
     Extract valid Terabox URL from user input
@@ -114,13 +151,17 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                                         filename = data['data'][key]
                                         break
 
-                            if stream_url:
+                            if stream_url and is_valid_stream_url(stream_url):
                                 filename = filename or os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
                                 filename = re.sub(r'[<>:"\\\\/|?*]', '', filename)
                                 if not filename.endswith(('.mp4', '.mkv', '.avi', '.mov')):
                                     filename += '.mp4'
                                 logger.info(f"API {api_attempt} - Stream URL from JSON: {stream_url[:80]}")
                                 return stream_url, filename
+                            elif stream_url:
+                                logger.warning(f"API {api_attempt} - Returned URL looks like Terabox link, not a stream URL: {stream_url[:80]}")
+                                last_error = "API returned invalid stream URL (looks like Terabox link)"
+                                continue
                     except json.JSONDecodeError:
                         pass
                     
@@ -132,9 +173,12 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         match = re.search(pattern, text)
                         if match:
                             stream_url = match.group(1).replace('\\/', '/')
-                            filename = f'terabox_video_{resolution}.mp4'
-                            logger.info(f"API {api_attempt} - Found {resolution} URL: {stream_url[:80]}")
-                            return stream_url, filename
+                            if is_valid_stream_url(stream_url):
+                                filename = f'terabox_video_{resolution}.mp4'
+                                logger.info(f"API {api_attempt} - Found {resolution} URL: {stream_url[:80]}")
+                                return stream_url, filename
+                            else:
+                                logger.debug(f"API {api_attempt} - {resolution} URL failed validation: {stream_url[:80]}")
                     
                     # Search for m3u8
                     m3u8_patterns = [
@@ -145,8 +189,9 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         m3u8_match = re.search(pattern, text)
                         if m3u8_match:
                             stream_url = m3u8_match.group(1).replace('\\/', '/').replace('\\:', ':')
-                            logger.info(f"API {api_attempt} - Found m3u8 URL: {stream_url[:80]}")
-                            return stream_url, 'terabox_video.mp4'
+                            if is_valid_stream_url(stream_url):
+                                logger.info(f"API {api_attempt} - Found m3u8 URL: {stream_url[:80]}")
+                                return stream_url, 'terabox_video.mp4'
                     
                     # Search for mp4
                     mp4_patterns = [
@@ -157,9 +202,10 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         mp4_match = re.search(pattern, text)
                         if mp4_match:
                             stream_url = mp4_match.group(1).replace('\\/', '/').replace('\\:', ':')
-                            filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
-                            logger.info(f"API {api_attempt} - Found mp4 URL: {stream_url[:80]}")
-                            return stream_url, filename
+                            if is_valid_stream_url(stream_url):
+                                filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
+                                logger.info(f"API {api_attempt} - Found mp4 URL: {stream_url[:80]}")
+                                return stream_url, filename
 
                     logger.warning(f"API {api_attempt} - Could not extract stream")
                     last_error = "Could not extract from response"
@@ -177,19 +223,48 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
         page_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
+            'Referer': 'https://terabox.com/',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
         async with aiohttp.ClientSession(headers=page_headers) as session:
             async with session.get(terabox_url, timeout=aiohttp.ClientTimeout(total=config.TIMEOUT), ssl=False) as page_resp:
                 if page_resp.status == 200:
                     page_text = await page_resp.text()
+                    logger.debug(f"Terabox page fetched, length: {len(page_text)} bytes")
                     
+                    # Search for playUrl or other stream URLs in page
+                    playurl_pattern = r'"playUrl"\s*:\s*"([^"]+)"'
+                    match = re.search(playurl_pattern, page_text)
+                    if match:
+                        stream_url = match.group(1).replace('\\/', '/')
+                        if is_valid_stream_url(stream_url):
+                            logger.info(f"Fallback - Found playUrl: {stream_url[:80]}")
+                            return stream_url, 'terabox_video.mp4'
+                    
+                    # Try resolutions
                     for resolution in ["360p", "480p", "720p", "1080p"]:
                         pattern = rf'"{resolution}"\s*:\s*"([^"]+)"'
                         match = re.search(pattern, page_text)
                         if match:
                             stream_url = match.group(1).replace('\\/', '/')
-                            logger.info(f"Fallback - Found {resolution} URL: {stream_url[:80]}")
-                            return stream_url, f'terabox_video_{resolution}.mp4'
+                            if is_valid_stream_url(stream_url):
+                                logger.info(f"Fallback - Found {resolution} URL: {stream_url[:80]}")
+                                return stream_url, f'terabox_video_{resolution}.mp4'
+                    
+                    # Try to find any m3u8 URLs
+                    m3u8_patterns = [
+                        r'(https?://[^\s"\'<>]*\.m3u8[^\s"\'<>]*)',
+                        r'["\'](https?://[^"\']*?\.m3u8[^"\']*)["\']',
+                    ]
+                    for pattern in m3u8_patterns:
+                        m3u8_match = re.search(pattern, page_text)
+                        if m3u8_match:
+                            stream_url = m3u8_match.group(1).replace('\\/', '/').replace('\\:', ':')
+                            if is_valid_stream_url(stream_url):
+                                logger.info(f"Fallback - Found m3u8 URL: {stream_url[:80]}")
+                                return stream_url, 'terabox_video.mp4'
+                    
+                    logger.warning("Could not find any valid stream URLs in Terabox page")
     except Exception as e:
         logger.debug(f"Fallback page fetch failed: {e}")
 
