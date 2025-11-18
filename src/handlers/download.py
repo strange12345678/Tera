@@ -321,6 +321,12 @@ async def _download_direct_http(stream_url: str, file_path: str, filename: str) 
                     logger.error(f"Stream returned status code {response.status}")
                     return None
                 
+                # Check for HTML content - indicates error/login page
+                content_type = response.content_type or ""
+                if "text/html" in content_type.lower():
+                    logger.error(f"Received HTML content instead of video (Content-Type: {content_type})")
+                    return None
+                
                 # Check file size before downloading
                 content_length = response.content_length
                 if content_length and content_length > config.MAX_FILE_SIZE:
@@ -344,6 +350,14 @@ async def _download_direct_http(stream_url: str, file_path: str, filename: str) 
                     logger.error(f"Downloaded file is suspiciously small: {file_size} bytes - likely dummy/error response")
                     os.remove(file_path)
                     return None
+                
+                # Read first few bytes to check if it's HTML (corruption check)
+                with open(file_path, 'rb') as f:
+                    header = f.read(100)
+                    if header.startswith(b'<!DOCTYPE') or header.startswith(b'<html') or b'<html' in header[:200]:
+                        logger.error(f"Downloaded file contains HTML - likely an error/login page")
+                        os.remove(file_path)
+                        return None
                 
                 logger.info(f"Download complete: {filename} ({file_size} bytes / {file_size/(1024*1024):.1f}MB)")
                 return file_path
@@ -437,7 +451,12 @@ async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
                     filename = data.get("filename", "terabox_video.mp4")
 
                     if file_url:
-                        logger.info(f"Successfully fetched file URL from API")
+                        logger.info(f"Successfully fetched file URL from API: {file_url[:100]}")
+                        
+                        # Validate file URL - check if it's a valid media URL
+                        if not isinstance(file_url, str) or not file_url.startswith(('http://', 'https://')):
+                            logger.error(f"Invalid file URL received from API: {file_url}")
+                            return None, None
                         
                         # Download the file
                         downloads_dir = Path("downloads")
