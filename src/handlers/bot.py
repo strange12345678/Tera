@@ -480,12 +480,12 @@ Hi {user.first_name}!
                         pass
                     continue
 
-                # Send the file to the user
+                # Send the file to the user as video
                 try:
                     with open(file_path, 'rb') as f:
-                        await context.bot.send_document(
+                        await context.bot.send_video(
                             chat_id=user_id,
-                            document=f,
+                            video=f,
                             filename=filename,
                             caption=f"✅ **Download Complete!**\n\n{filename}"
                         )
@@ -497,7 +497,7 @@ Hi {user.first_name}!
                         "✅ **Download Complete**\n\n"
                         f"📹 {filename}\n"
                         f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                        "✔️ File sent successfully!"
+                        "✔️ Video sent successfully!"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send file to user: {e}")
@@ -647,12 +647,12 @@ Hi {user.first_name}!
                         pass
                     continue
                 
-                # Send the file to the user
+                # Send the file to the user as video
                 try:
                     with open(file_path, 'rb') as f:
-                        await context.bot.send_document(
+                        await context.bot.send_video(
                             chat_id=user_id,
-                            document=f,
+                            video=f,
                             filename=filename,
                             caption=f"✅ **Download Complete!**\n\n{filename}"
                         )
@@ -660,7 +660,7 @@ Hi {user.first_name}!
                     logger.info(f"Successfully sent file: {filename} to user {user_id}")
                 except Exception as e:
                     logger.error(f"Failed to send file to user: {e}")
-                    await processing_msg.edit_text("❌ Failed to send file. Please try again.")
+                    await processing_msg.edit_text("❌ Failed to send video. Please try again.")
                 
                 # Send to store channel if configured
                 if config.STORE_CHANNEL:
