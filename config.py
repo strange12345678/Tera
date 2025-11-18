@@ -37,6 +37,9 @@ TERABOX_API_FALLBACKS = [
     # Alternative APIs
     "https://teraapi.boogafantastic.workers.dev/api?url={url}",
     "https://teraapi.boogafantastic.workers.dev/play?url={url}",
+    # Additional fallback services
+    "https://terabox-api.vercel.app/api?url={url}",
+    "https://terabox.herokuapp.com/api?url={url}",
 ]
 
 # Download Configuration
