@@ -26,7 +26,18 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 STORE_CHANNEL = os.getenv("STORE_CHANNEL", "-1003292407667")
 
 # API Configuration
+# Primary API (iTeraPlay)
 TERABOX_API = "https://iteraplay.com/api/play.php?url={url}&key=iTeraPlay2025"
+
+# Fallback APIs to try if primary fails
+TERABOX_API_FALLBACKS = [
+    # Try with different iTeraPlay endpoints
+    "https://iteraplay.com/api?url={url}",
+    "https://iteraplay.com/play?url={url}",
+    # Alternative APIs
+    "https://teraapi.boogafantastic.workers.dev/api?url={url}",
+    "https://teraapi.boogafantastic.workers.dev/play?url={url}",
+]
 
 # Download Configuration
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "./downloads")

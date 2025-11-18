@@ -7,6 +7,7 @@ import logging
 import aiohttp
 import asyncio
 import subprocess
+import json
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
@@ -43,226 +44,157 @@ async def extract_terabox_url(url: str) -> Optional[str]:
 
 async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
     """
-    Fetch streaming URL from iTeraPlay API
+    Fetch streaming URL from iTeraPlay API and fallback APIs
     Returns: (stream_url, filename) or (None, None) if failed
     """
-    api_url = config.TERABOX_API.format(url=terabox_url)
-    logger.info(f"Fetching stream URL for: {terabox_url} -> {api_url}")
+    
+    # List of APIs to try
+    api_urls_to_try = [
+        config.TERABOX_API.format(url=terabox_url),  # Primary
+    ]
+    if hasattr(config, 'TERABOX_API_FALLBACKS'):
+        api_urls_to_try.extend([
+            api_url.format(url=terabox_url) 
+            for api_url in config.TERABOX_API_FALLBACKS
+        ])
+    
+    last_error = None
+    
+    for api_attempt, api_url in enumerate(api_urls_to_try, 1):
+        logger.info(f"Attempting API {api_attempt}/{len(api_urls_to_try)}: {api_url[:80]}...")
+        
+        try:
+            api_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+                'Referer': 'https://terabox.com/',
+                'Accept': '*/*',
+            }
 
-    try:
-        # Use browser-like headers for API call and retry once if anti-bot page detected
-        api_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-            'Referer': 'https://terabox.com/',
-            'Accept': '*/*',
-        }
-
-        async with aiohttp.ClientSession(headers=api_headers) as session:
-            # Try a couple of times if the API returns an anti-bot page
-            anti_bot_detected = False
-            for attempt in range(2):
+            async with aiohttp.ClientSession(headers=api_headers) as session:
                 async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=config.TIMEOUT)) as response:
-                    logger.info(f"API Response Status: {response.status}")
+                    logger.info(f"API {api_attempt} Response Status: {response.status}")
 
-                    # If Cloudflare/anti-bot HTML returned, retry once
-                    try:
-                        peek = await response.text()
-                    except Exception:
-                        peek = ''
-                    if response.status in (403, 520) or 'Bot Verification' in peek or 'recaptcha' in peek.lower():
-                        logger.warning(f"API appears to be protected by anti-bot (status {response.status}). Attempt {attempt+1}.")
-                        anti_bot_detected = True
-                        if attempt == 0:
-                            await asyncio.sleep(1)
-                            continue
-                        else:
-                            # proceed to fallback extraction below
-                            text = peek
-                            logger.debug("Proceeding to fallback extraction after anti-bot detection")
-                    else:
-                        # normal flow: try JSON / text parsing below
-                        # reset stream to beginning by using peek as text
-                        text = peek
-                
-                if response.status == 404:
-                    logger.error(f"API returned 404 - Link may be invalid or expired")
-                    return None, None
+                    if response.status == 404:
+                        logger.warning(f"API {api_attempt} returned 404")
+                        last_error = "API returned 404"
+                        continue
                     
-                if response.status != 200:
-                    logger.error(f"API returned status code {response.status}")
-                    # Try to fallback to response URL if it redirected
-                    if response.url and str(response.url) != api_url:
-                        candidate = str(response.url)
-                        logger.info(f"Using redirect URL as candidate stream: {candidate}")
-                        return candidate, os.path.basename(urlparse(candidate).path) or 'terabox_video.mp4'
-                    return None, None
+                    if response.status != 200:
+                        logger.warning(f"API {api_attempt} returned status {response.status}")
+                        last_error = f"API returned {response.status}"
+                        continue
 
-                # Try JSON first
-                try:
-                    data = await response.json()
-                except Exception as e:
-                    logger.debug(f"Response is not JSON: {e}")
-                    data = None
+                    # Try JSON first
+                    text = await response.text()
+                    
+                    try:
+                        data = json.loads(text)
+                        if isinstance(data, dict):
+                            stream_url = None
+                            filename = None
 
-                # If JSON present, try a few common shapes
-                if isinstance(data, dict):
-                    # common keys in different APIs
-                    stream_url = None
-                    filename = None
+                            for key in ("url", "stream_url", "play_url", "video_url"):
+                                if key in data and data[key]:
+                                    stream_url = data[key]
+                                    break
 
-                    # Direct url fields
-                    for key in ("url", "stream_url", "play_url", "video_url"):
-                        if key in data and data[key]:
-                            stream_url = data[key]
-                            break
+                            if not stream_url and isinstance(data.get('data'), dict):
+                                for key in ("url", "stream_url", "play_url", "video_url"):
+                                    if key in data['data'] and data['data'][key]:
+                                        stream_url = data['data'][key]
+                                        break
 
-                    # Some APIs wrap values under 'data' or 'result'
-                    if not stream_url and isinstance(data.get('data'), dict):
-                        for key in ("url", "stream_url", "play_url", "video_url"):
-                            if key in data['data'] and data['data'][key]:
-                                stream_url = data['data'][key]
-                                break
+                            for key in ("filename", "title", "name"):
+                                if key in data and data[key]:
+                                    filename = data[key]
+                                    break
+                            if not filename and isinstance(data.get('data'), dict):
+                                for key in ("filename", "title", "name"):
+                                    if key in data['data'] and data['data'][key]:
+                                        filename = data['data'][key]
+                                        break
 
-                    # filename/title
-                    for key in ("filename", "title", "name"):
-                        if key in data and data[key]:
-                            filename = data[key]
-                            break
-                    if not filename and isinstance(data.get('data'), dict):
-                        for key in ("filename", "title", "name"):
-                            if key in data['data'] and data['data'][key]:
-                                filename = data['data'][key]
-                                break
+                            if stream_url:
+                                filename = filename or os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
+                                filename = re.sub(r'[<>:"\\\\/|?*]', '', filename)
+                                if not filename.endswith(('.mp4', '.mkv', '.avi', '.mov')):
+                                    filename += '.mp4'
+                                logger.info(f"API {api_attempt} - Stream URL from JSON: {stream_url[:80]}")
+                                return stream_url, filename
+                    except json.JSONDecodeError:
+                        pass
+                    
+                    logger.debug(f"API {api_attempt} response text length: {len(text)} bytes")
+                    
+                    # Try regex extraction from text
+                    for resolution in ["360p", "480p", "720p", "1080p"]:
+                        pattern = rf'"{resolution}"\s*:\s*"([^"]+)"'
+                        match = re.search(pattern, text)
+                        if match:
+                            stream_url = match.group(1).replace('\\/', '/')
+                            filename = f'terabox_video_{resolution}.mp4'
+                            logger.info(f"API {api_attempt} - Found {resolution} URL: {stream_url[:80]}")
+                            return stream_url, filename
+                    
+                    # Search for m3u8
+                    m3u8_patterns = [
+                        r'(https?://[^\s"\'<>]*\.m3u8[^\s"\'<>]*)',
+                        r'["\'](https?://[^"\']*?\.m3u8[^"\']*)["\']',
+                    ]
+                    for pattern in m3u8_patterns:
+                        m3u8_match = re.search(pattern, text)
+                        if m3u8_match:
+                            stream_url = m3u8_match.group(1).replace('\\/', '/').replace('\\:', ':')
+                            logger.info(f"API {api_attempt} - Found m3u8 URL: {stream_url[:80]}")
+                            return stream_url, 'terabox_video.mp4'
+                    
+                    # Search for mp4
+                    mp4_patterns = [
+                        r'(https?://[^\s"\'<>]*\.mp4[^\s"\'<>]*)',
+                        r'["\'](https?://[^"\']*?\.mp4[^"\']*)["\']',
+                    ]
+                    for pattern in mp4_patterns:
+                        mp4_match = re.search(pattern, text)
+                        if mp4_match:
+                            stream_url = mp4_match.group(1).replace('\\/', '/').replace('\\:', ':')
+                            filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
+                            logger.info(f"API {api_attempt} - Found mp4 URL: {stream_url[:80]}")
+                            return stream_url, filename
 
-                    if stream_url:
-                        filename = filename or os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
-                        filename = re.sub(r'[<>:\"/\\|?*]', '', filename)
-                        if not filename.endswith(('.mp4', '.mkv', '.avi', '.mov')):
-                            filename += '.mp4'
-                        logger.info(f"Stream URL fetched from JSON: {stream_url[:80]}")
-                        return stream_url, filename
-
-                # If not JSON or couldn't extract, try to read text and search for video URLs
-                text = await response.text()
-                logger.debug(f"Response text length: {len(text)} bytes")
+                    logger.warning(f"API {api_attempt} - Could not extract stream")
+                    last_error = "Could not extract from response"
                 
-                # Log a sample of the response for debugging
-                if len(text) > 0:
-                    logger.debug(f"Response sample (first 500 chars): {text[:500]}")
-                    logger.debug(f"Response sample (last 500 chars): {text[-500:]}")
-                
-                # First priority: Look for videoQualities (standard TeraBox player format)
-                # Try different resolution options in order of preference
-                for resolution in ["360p", "480p", "720p", "1080p", "playUrl"]:
-                    pattern = rf'"{resolution}"\s*:\s*"([^"]+)"'
-                    match = re.search(pattern, text)
-                    if match:
-                        stream_url = match.group(1)
-                        # Unescape forward slashes
-                        stream_url = stream_url.replace('\\/', '/')
-                        filename = f'terabox_video_{resolution}.mp4'
-                        logger.info(f"Found {resolution} stream URL: {stream_url[:80]}")
-                        return stream_url, filename
-                    else:
-                        logger.debug(f"Resolution {resolution} not found in response")
-                
-                # Search for m3u8 (HLS stream) URLs - handle escaped JSON strings too
-                m3u8_patterns = [
-                    r'(https?://[^\s"\'<>]*\.m3u8[^\s"\'<>]*)',  # plain URL
-                        r'["\'](https?://[^"\']*?\.m3u8[^"\']*)["\']',  # m3u8 inside quotes (must be a URL)
-                ]
-                for i, pattern in enumerate(m3u8_patterns):
-                    m3u8_match = re.search(pattern, text)
-                    if m3u8_match:
-                        stream_url = m3u8_match.group(1)
-                        # Unescape if necessary
-                        stream_url = stream_url.replace('\\/', '/').replace('\\:', ':')
-                        filename = 'terabox_video.mp4'
-                        logger.info(f"Found m3u8 stream URL (pattern {i}): {stream_url[:80]}")
-                        return stream_url, filename
-                    else:
-                        logger.debug(f"m3u8 pattern {i} not found")
-                
-                # Search for mp4 URLs
-                mp4_patterns = [
-                    r'(https?://[^\s"\'<>]*\.mp4[^\s"\'<>]*)',  # plain URL
-                        r'["\'](https?://[^"\']*?\.mp4[^"\']*)["\']',  # mp4 inside quotes (must be a URL)
-                ]
-                for i, pattern in enumerate(mp4_patterns):
-                    mp4_match = re.search(pattern, text)
-                    if mp4_match:
-                        stream_url = mp4_match.group(1)
-                        stream_url = stream_url.replace('\\/', '/').replace('\\:', ':')
-                        filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
-                        logger.info(f"Found mp4 stream URL (pattern {i}): {stream_url[:80]}")
-                        return stream_url, filename
-                    else:
-                        logger.debug(f"mp4 pattern {i} not found")
-
-                # If we couldn't extract from the iTeraPlay API response, try fetching the original Terabox page
-                logger.info("Attempting fallback: fetch Terabox page directly to extract stream URL")
-                try:
-                    # Browser-like headers to avoid simple bot blocks
-                    page_headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Referer': 'https://terabox.com/'
-                    }
-                    async with session.get(terabox_url, headers=page_headers, timeout=aiohttp.ClientTimeout(total=config.TIMEOUT), ssl=False, allow_redirects=True) as page_resp:
-                        logger.info(f"Terabox page response status: {page_resp.status}")
-                        if page_resp.status == 200:
-                            page_text = await page_resp.text()
-                            logger.debug(f"Terabox page length: {len(page_text)} bytes")
-
-                            # Try the same extraction logic on the page
-                            for resolution in ["360p", "480p", "720p", "1080p", "playUrl"]:
-                                pattern = rf'"{resolution}"\s*:\s*"([^\"]+)"'
-                                match = re.search(pattern, page_text)
-                                if match:
-                                    stream_url = match.group(1).replace('\\/', '/')
-                                    filename = f'terabox_video_{resolution}.mp4'
-                                    logger.info(f"Found {resolution} stream URL on page: {stream_url[:80]}")
-                                    return stream_url, filename
-
-                            # m3u8 on page
-                            for i, pattern in enumerate(m3u8_patterns):
-                                m3u8_match = re.search(pattern, page_text)
-                                if m3u8_match:
-                                    stream_url = m3u8_match.group(1).replace('\\/', '/').replace('\\:', ':')
-                                    filename = 'terabox_video.mp4'
-                                    logger.info(f"Found m3u8 stream URL on page (pattern {i}): {stream_url[:80]}")
-                                    return stream_url, filename
-
-                            # mp4 on page
-                            for i, pattern in enumerate(mp4_patterns):
-                                mp4_match = re.search(pattern, page_text)
-                                if mp4_match:
-                                    stream_url = mp4_match.group(1).replace('\\/', '/').replace('\\:', ':')
-                                    filename = os.path.basename(urlparse(stream_url).path) or 'terabox_video.mp4'
-                                    logger.info(f"Found mp4 stream URL on page (pattern {i}): {stream_url[:80]}")
-                                    return stream_url, filename
-                            
-                            logger.warning(f"No stream URLs found on Terabox page either")
-                        else:
-                            logger.warning(f"Terabox page returned status {page_resp.status}")
-                except Exception as e:
-                    logger.debug(f"Fallback page fetch failed: {e}")
-
-                # If anti-bot detected, raise a specific error so caller can inform the user
-                if anti_bot_detected:
-                    logger.error("Anti-bot protection detected when fetching stream URL")
-                    raise RuntimeError("anti-bot-detected")
-
-                logger.warning(f"Unable to extract stream URL from API response (response length: {len(text)})")
-                return None, None
-
-    except asyncio.TimeoutError:
-        logger.error("API request timed out")
-        return None, None
+        except asyncio.TimeoutError:
+            logger.warning(f"API {api_attempt} timeout")
+            last_error = "API timeout"
+        except Exception as e:
+            logger.warning(f"API {api_attempt} error: {e}")
+            last_error = f"API error: {str(e)[:50]}"
+    
+    # Try direct Terabox page as last resort
+    logger.info("Trying Terabox page directly as fallback")
+    try:
+        page_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
+        }
+        async with aiohttp.ClientSession(headers=page_headers) as session:
+            async with session.get(terabox_url, timeout=aiohttp.ClientTimeout(total=config.TIMEOUT), ssl=False) as page_resp:
+                if page_resp.status == 200:
+                    page_text = await page_resp.text()
+                    
+                    for resolution in ["360p", "480p", "720p", "1080p"]:
+                        pattern = rf'"{resolution}"\s*:\s*"([^"]+)"'
+                        match = re.search(pattern, page_text)
+                        if match:
+                            stream_url = match.group(1).replace('\\/', '/')
+                            logger.info(f"Fallback - Found {resolution} URL: {stream_url[:80]}")
+                            return stream_url, f'terabox_video_{resolution}.mp4'
     except Exception as e:
-        logger.error(f"Error fetching stream URL: {e}", exc_info=True)
-        return None, None
+        logger.debug(f"Fallback page fetch failed: {e}")
+
+    logger.error(f"All extraction methods failed. Last: {last_error}")
+    return None, None
 
 
 async def download_video(stream_url: str, filename: str) -> Optional[str]:
