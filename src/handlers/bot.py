@@ -379,8 +379,8 @@ Hi {user.first_name}!
         """
         # More flexible pattern that matches any terabox variant domain
         # Matches: terabox.com, 1024terabox.com, teraboxlink.com, etc.
-        # Pattern allows for any characters (including emojis) before the URL
-        terabox_pattern = r'https?://[a-zA-Z0-9.]*terabox[a-zA-Z0-9.]*\.com/(?:s|folder)/[a-zA-Z0-9_-]+'
+        # Pattern allows for numbers and dots in domain name
+        terabox_pattern = r'https?://(?:[a-zA-Z0-9]*\.)?terabox[a-zA-Z0-9]*\.com/(?:s|folder)/[a-zA-Z0-9_-]+'
         
         links = re.findall(terabox_pattern, text, re.IGNORECASE)
         
@@ -443,8 +443,11 @@ Hi {user.first_name}!
         # Extract all Terabox links from the message using regex (most reliable method)
         links = self.extract_terabox_links(user_message)
         logger.debug(f"Extracted {len(links)} link(s) using regex: {links}")
+        logger.info(f"[EXTRACT] Text to search: {repr(user_message[:100])}")
+        logger.info(f"[EXTRACT] Found {len(links)} links: {links}")
         
         if not links:
+            logger.warning(f"[EXTRACT_FAILED] No links found in message. Text={repr(user_message)}")
             await update.message.reply_text(
                 "❌ No Terabox links found in your message.\n\n"
                 "Please send a valid Terabox URL like:\n"
