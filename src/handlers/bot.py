@@ -401,11 +401,12 @@ Hi {user.first_name}!
         """Handle incoming message with Terabox links (including forwarded messages)"""
         # Handle both regular and forwarded messages
         user_message = update.message.text
+        is_forwarded = update.message.forward_origin is not None
         
-        logger.info(f"[HANDLE_LINK] Called for user {update.message.from_user.id}, is_forwarded={update.message.is_forwarded()}, text={user_message[:50] if user_message else None}...")
+        logger.info(f"[HANDLE_LINK] Called for user {update.message.from_user.id}, is_forwarded={is_forwarded}, text={user_message[:50] if user_message else None}...")
         
         # Special handling for forwarded messages
-        if update.message.is_forwarded():
+        if is_forwarded:
             logger.info(f"[HANDLE_LINK] Message is forwarded from {update.message.forward_origin}")
             # For forwarded messages without text, Telegram doesn't preserve original content
             if not user_message:
