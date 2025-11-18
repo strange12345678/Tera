@@ -445,11 +445,20 @@ async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
                 logger.info(f"API Response Status: {response.status}")
+                logger.info(f"Response Content-Type: {response.content_type}")
+                logger.info(f"Response Content-Length: {response.content_length}")
                 
                 if response.status == 200:
-                    # Try to parse JSON response
+                    content_type = response.content_type or ""
+                    
+                    # If it's HTML, it's an error page
+                    if "text/html" in content_type.lower():
+                        logger.error("API returned HTML error page")
+                        return None, None
+                    
+                    # Try to parse JSON response first
                     try:
                         data = await response.json()
                         logger.info(f"API returned JSON: {str(data)[:200]}")
@@ -463,27 +472,10 @@ async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
                             return None, None
                     except Exception as e:
                         logger.warning(f"Failed to parse JSON response: {e}")
-                        # If not JSON, the response might be the direct video stream
-                        try:
-                            content_type = response.content_type or ""
-                            logger.info(f"Response Content-Type: {content_type}")
-                            
-                            # If it's HTML, it's an error page
-                            if "text/html" in content_type.lower():
-                                logger.error("API returned HTML error page")
-                                return None, None
-                            
-                            # If it's a video stream, download it directly
-                            if "video" in content_type.lower() or "octet-stream" in content_type.lower():
-                                logger.info("API returned direct video stream")
-                                file_url = api_url
-                                filename = "terabox_video.mp4"
-                            else:
-                                logger.error(f"Unexpected content type: {content_type}")
-                                return None, None
-                        except Exception as e2:
-                            logger.error(f"Error handling response: {e2}")
-                            return None, None
+                        # If not JSON, treat as direct video stream if content looks like video
+                        logger.info("Treating response as direct video stream")
+                        file_url = api_url
+                        filename = "terabox_video.mp4"
                     
                     # Validate file URL
                     if not isinstance(file_url, str) or not file_url.startswith(('http://', 'https://')):
