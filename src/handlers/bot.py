@@ -38,39 +38,39 @@ WAITING_FOR_LINK = 1
 
 
 class TeraboxBot:
-        async def set_error_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            user_id = update.message.from_user.id
-            if not context.args or len(context.args) < 1:
-                await update.message.reply_text("Usage: /set_error_channel [channel_id]")
-                return
-            channel_id = context.args[0]
-            result = handle_set_error_channel(user_id, channel_id)
-            await update.message.reply_text(result)
+    async def set_error_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.message.from_user.id
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text("Usage: /set_error_channel [channel_id]")
+            return
+        channel_id = context.args[0]
+        result = handle_set_error_channel(user_id, channel_id)
+        await update.message.reply_text(result)
 
-        async def remove_error_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            user_id = update.message.from_user.id
-            result = handle_remove_error_channel(user_id, None)
-            await update.message.reply_text(result)
+    async def remove_error_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.message.from_user.id
+        result = handle_remove_error_channel(user_id, None)
+        await update.message.reply_text(result)
 
-        async def set_auto_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            user_id = update.message.from_user.id
-            if not context.args or len(context.args) < 1:
-                await update.message.reply_text("Usage: /set_auto_channel [channel_id]")
-                return
-            channel_id = context.args[0]
-            result = handle_set_auto_channel(user_id, channel_id)
-            await update.message.reply_text(result)
+    async def set_auto_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.message.from_user.id
+        if not context.args or len(context.args) < 1:
+            await update.message.reply_text("Usage: /set_auto_channel [channel_id]")
+            return
+        channel_id = context.args[0]
+        result = handle_set_auto_channel(user_id, channel_id)
+        await update.message.reply_text(result)
 
-        async def remove_auto_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            user_id = update.message.from_user.id
-            result = handle_remove_auto_channel(user_id, None)
-            await update.message.reply_text(result)
+    async def remove_auto_channel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = update.message.from_user.id
+        result = handle_remove_auto_channel(user_id, None)
+        await update.message.reply_text(result)
 
-        def add_command_handlers(self, app):
-            app.add_handler(CommandHandler("set_error_channel", self.set_error_channel_command))
-            app.add_handler(CommandHandler("remove_error_channel", self.remove_error_channel_command))
-            app.add_handler(CommandHandler("set_auto_channel", self.set_auto_channel_command))
-            app.add_handler(CommandHandler("remove_auto_channel", self.remove_auto_channel_command))
+    def add_command_handlers(self, app):
+        app.add_handler(CommandHandler("set_error_channel", self.set_error_channel_command))
+        app.add_handler(CommandHandler("remove_error_channel", self.remove_error_channel_command))
+        app.add_handler(CommandHandler("set_auto_channel", self.set_auto_channel_command))
+        app.add_handler(CommandHandler("remove_auto_channel", self.remove_auto_channel_command))
     """Telegram bot for downloading Terabox videos"""
     
     def __init__(self, token: str):
@@ -438,95 +438,70 @@ Hi {user.first_name}!
                 
                 logger.info(f"Processing link: {link}")
                 
-                # Process the link
-                try:
-                    file_path, filename = await process_terabox_link(link)
-                except RuntimeError as re_err:
-                    # Handle specific errors
-                    if 'anti-bot' in str(re_err):
-                        logger.warning(f"Anti-bot detected for link: {link}")
-                        await processing_msg.edit_text(
-                            "❌ **Download Failed**\n\n"
-                            "⚠️ The API is protected with reCAPTCHA.\n\n"
-                            "Please try again later."
-                        )
-                        continue
-                    else:
-                        logger.error(f"Runtime error during extraction: {re_err}")
-                        await processing_msg.edit_text(
-                            f"❌ **Download Failed**\n\n"
-                            f"Error: {str(re_err)}\n\n"
-                            "Please try again or use a different link."
-                        )
-                        continue
-                
+                # Process the link using the new API
+                file_path, filename = await process_terabox_link(link)
+
                 if not file_path:
                     logger.warning(f"Failed to process link: {link}")
-                    await processing_msg.edit_text(
+                    error_text = (
                         "❌ **Download Failed**\n\n"
                         "Could not extract video from the link.\n\n"
                         "Please check if the link is valid and try again."
                     )
+                    await processing_msg.edit_text(error_text)
+                    # Forward to error channel if set
+                    error_channel = db.get_error_channel(user_id)
+                    if error_channel:
+                        try:
+                            await self.app.bot.send_message(
+                                chat_id=error_channel,
+                                text=f"❌ Failed download for user {user_id}:\n{link}\n\n{error_text}",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to forward error to error channel: {e}")
                     continue
-                
+
                 # Check file size before sending
                 file_size = os.path.getsize(file_path)
                 file_size_mb = file_size / (1024 * 1024)
-                
+
                 if file_size_mb > config.MAX_TELEGRAM_FILE_SIZE_MB:  # Telegram API limit
-                    logger.warning(f"File too large: {file_size_mb:.1f}MB")
+                    logger.warning(f"File size {file_size_mb} MB exceeds Telegram limit.")
+                    error_text = (
+                        "❌ **Download Failed**\n\n"
+                        "The file size exceeds Telegram's limit of 2GB.\n\n"
+                        "Please try a smaller file."
+                    )
+                    await processing_msg.edit_text(error_text)
                     try:
                         os.remove(file_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to clean up file: {e}")
-                    await processing_msg.edit_text(
-                        f"❌ **File Too Large**\n\n"
-                        f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                        f"Telegram limit: 2000MB\n"
-                        "Unfortunately, this file exceeds Telegram's limits."
-                    )
+                    except:
+                        pass
                     continue
-                
-                # Update message to show upload stage
-                await processing_msg.edit_text(
-                    "📤 **Uploading to Telegram...**\n\n"
-                    f"📹 {filename}\n"
-                    f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                    "This may take a few moments..."
-                )
-                
-                await update.message.chat.send_action(ChatAction.UPLOAD_VIDEO)
-                
-                # Send video to user
-                with open(file_path, 'rb') as video_file:
-                    await update.message.reply_video(
-                        video=video_file,
-                        caption=f"📹 {filename}\n📊 Size: {file_size_mb:.1f}MB",
-                        write_timeout=300
+
+                # Send the file to the user
+                try:
+                    with open(file_path, 'rb') as f:
+                        await context.bot.send_document(
+                            chat_id=user_id,
+                            document=f,
+                            filename=filename,
+                            caption=f"✅ **Download Complete!**\n\n{filename}"
+                        )
+
+                    logger.info(f"Successfully sent file: {filename} to user {user_id}")
+                    
+                    # Update message to show completion
+                    await processing_msg.edit_text(
+                        "✅ **Download Complete**\n\n"
+                        f"📹 {filename}\n"
+                        f"📊 Size: {file_size_mb:.1f}MB\n\n"
+                        "✔️ File sent successfully!"
                     )
-                
-                # Send to store channel if configured
-                if config.STORE_CHANNEL:
-                    try:
-                        with open(file_path, 'rb') as video_file:
-                            await self.app.bot.send_video(
-                                chat_id=config.STORE_CHANNEL,
-                                video=video_file,
-                                caption=f"📹 {filename}\nUser: {update.message.from_user.mention_html()}\nSize: {file_size_mb:.1f}MB",
-                                parse_mode='HTML',
-                                write_timeout=300
-                            )
-                        logger.info(f"Sent to store channel: {filename}")
-                    except Exception as e:
-                        logger.warning(f"Failed to send to store channel: {e}")
-                
-                # Update message to show completion
-                await processing_msg.edit_text(
-                    "✅ **Download Complete**\n\n"
-                    f"📹 {filename}\n"
-                    f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                    "✔️ Video uploaded and archived in store channel!"
-                )
+                except Exception as e:
+                    logger.error(f"Failed to send file to user: {e}")
+                    await processing_msg.edit_text("❌ Failed to send file. Please try again.")
                 
                 # Clean up the file
                 try:
@@ -540,14 +515,27 @@ Hi {user.first_name}!
                 
             except Exception as e:
                 logger.error(f"Error processing link {link}: {e}")
+                error_text = (
+                    f"❌ **An Error Occurred**\n\n"
+                    f"Error: {str(e)}\n\n"
+                    "Please try again."
+                )
                 try:
-                    await processing_msg.edit_text(
-                        f"❌ **An Error Occurred**\n\n"
-                        f"Error: {str(e)}\n\n"
-                        "Please try again."
-                    )
+                    await processing_msg.edit_text(error_text)
                 except:
                     pass
+                # Forward to error channel if set
+                error_channel = db.get_error_channel(user_id)
+                if error_channel:
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=error_channel,
+                            text=f"❌ Failed download for user {user_id}:\n{link}\n\n{error_text}",
+                            parse_mode='Markdown'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to forward error to error channel: {e}")
+                continue
         
         return WAITING_FOR_LINK
 
@@ -617,35 +605,28 @@ Hi {user.first_name}!
                 
                 logger.info(f"Processing link from caption: {link}")
                 
-                # Process the link
-                try:
-                    file_path, filename = await process_terabox_link(link)
-                except RuntimeError as re_err:
-                    # Handle specific errors
-                    if 'anti-bot' in str(re_err):
-                        logger.warning(f"Anti-bot detected for link: {link}")
-                        await processing_msg.edit_text(
-                            "❌ **Download Failed**\n\n"
-                            "⚠️ The API is protected with reCAPTCHA.\n\n"
-                            "Please try again later."
-                        )
-                        continue
-                    else:
-                        logger.error(f"Runtime error during extraction: {re_err}")
-                        await processing_msg.edit_text(
-                            f"❌ **Download Failed**\n\n"
-                            f"Error: {str(re_err)}\n\n"
-                            "Please try again or use a different link."
-                        )
-                        continue
-                
+                # Process the link using the new API
+                file_path, filename = await process_terabox_link(link)
+
                 if not file_path:
                     logger.warning(f"Failed to process link: {link}")
-                    await processing_msg.edit_text(
+                    error_text = (
                         "❌ **Download Failed**\n\n"
                         "Could not extract video from the link.\n\n"
                         "Please check if the link is valid and try again."
                     )
+                    await processing_msg.edit_text(error_text)
+                    # Forward to error channel if set
+                    error_channel = db.get_error_channel(user_id)
+                    if error_channel:
+                        try:
+                            await self.app.bot.send_message(
+                                chat_id=error_channel,
+                                text=f"❌ Failed download for user {user_id}:\n{link}\n\n{error_text}",
+                                parse_mode='Markdown'
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to forward error to error channel: {e}")
                     continue
                 
                 # Check file size before sending
@@ -653,36 +634,33 @@ Hi {user.first_name}!
                 file_size_mb = file_size / (1024 * 1024)
                 
                 if file_size_mb > config.MAX_TELEGRAM_FILE_SIZE_MB:  # Telegram API limit
-                    logger.warning(f"File too large: {file_size_mb:.1f}MB")
+                    logger.warning(f"File size {file_size_mb} MB exceeds Telegram limit.")
+                    error_text = (
+                        "❌ **Download Failed**\n\n"
+                        "The file size exceeds Telegram's limit of 2GB.\n\n"
+                        "Please try a smaller file."
+                    )
+                    await processing_msg.edit_text(error_text)
                     try:
                         os.remove(file_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to clean up file: {e}")
-                    await processing_msg.edit_text(
-                        f"❌ **File Too Large**\n\n"
-                        f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                        f"Telegram limit: 2000MB\n"
-                        "Unfortunately, this file exceeds Telegram's limits."
-                    )
+                    except:
+                        pass
                     continue
                 
-                # Update message to show upload stage
-                await processing_msg.edit_text(
-                    "📤 **Uploading to Telegram...**\n\n"
-                    f"📹 {filename}\n"
-                    f"📊 Size: {file_size_mb:.1f}MB\n\n"
-                    "This may take a few moments..."
-                )
-                
-                await update.message.chat.send_action(ChatAction.UPLOAD_VIDEO)
-                
-                # Send video to user
-                with open(file_path, 'rb') as video_file:
-                    await update.message.reply_video(
-                        video=video_file,
-                        caption=f"📹 {filename}\n📊 Size: {file_size_mb:.1f}MB",
-                        write_timeout=300
-                    )
+                # Send the file to the user
+                try:
+                    with open(file_path, 'rb') as f:
+                        await context.bot.send_document(
+                            chat_id=user_id,
+                            document=f,
+                            filename=filename,
+                            caption=f"✅ **Download Complete!**\n\n{filename}"
+                        )
+
+                    logger.info(f"Successfully sent file: {filename} to user {user_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send file to user: {e}")
+                    await processing_msg.edit_text("❌ Failed to send file. Please try again.")
                 
                 # Send to store channel if configured
                 if config.STORE_CHANNEL:
@@ -1301,10 +1279,10 @@ Use the buttons below to access features:
         self.app.add_handler(CommandHandler("add_pre_diamond", self.add_premium_diamond_command))
         
         # Channel management commands (Gold/Diamond only)
-        self.app.add_handler(CommandHandler("set_error_channel", set_error_channel))
-        self.app.add_handler(CommandHandler("remove_error_channel", remove_error_channel))
-        self.app.add_handler(CommandHandler("set_auto_channel", set_auto_channel))
-        self.app.add_handler(CommandHandler("remove_auto_channel", remove_auto_channel))
+        self.app.add_handler(CommandHandler("set_error_channel", self.set_error_channel_command))
+        self.app.add_handler(CommandHandler("remove_error_channel", self.remove_error_channel_command))
+        self.app.add_handler(CommandHandler("set_auto_channel", self.set_auto_channel_command))
+        self.app.add_handler(CommandHandler("remove_auto_channel", self.remove_auto_channel_command))
         
         self.app.add_handler(CallbackQueryHandler(self.button_callback))
         

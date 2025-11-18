@@ -422,25 +422,53 @@ async def _download_m3u8_with_ffmpeg(stream_url: str, file_path: str, filename: 
 
 async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
     """
-    Complete pipeline: validate -> fetch stream -> download
-    Returns: (file_path, filename) or (None, None)
+    Process a Terabox link using the new API endpoint.
+    Returns: (file_path, filename) or (None, None) if failed
     """
-    # Validate URL
-    terabox_url = await extract_terabox_url(url)
-    if not terabox_url:
-        logger.warning(f"Invalid Terabox URL: {url}")
+    api_url = f"https://teraapi.boogafantastic.workers.dev/api?url={url}"
+    logger.info(f"Processing Terabox link: {url} using API: {api_url}")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    file_url = data.get("file_url") or data.get("url")
+                    filename = data.get("filename", "terabox_video.mp4")
+
+                    if file_url:
+                        logger.info(f"Successfully fetched file URL from API")
+                        
+                        # Download the file
+                        downloads_dir = Path("downloads")
+                        downloads_dir.mkdir(exist_ok=True)
+                        
+                        # Clean filename
+                        filename = re.sub(r'[<>:"/\\|?*]', '', filename)
+                        if not filename.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+                            filename += '.mp4'
+                        
+                        file_path = downloads_dir / filename
+                        
+                        # Download the video file
+                        file_path = await _download_direct_http(file_url, str(file_path), filename)
+                        
+                        if file_path:
+                            return file_path, filename
+                        else:
+                            logger.error("Failed to download video from API URL")
+                            return None, None
+                    else:
+                        logger.error("API response did not contain a file URL.")
+                        return None, None
+                else:
+                    response_text = await response.text()
+                    logger.error(f"API request failed with status code: {response.status}")
+                    logger.debug(f"Response: {response_text[:200]}")
+                    return None, None
+    except asyncio.TimeoutError:
+        logger.error("API request timed out")
         return None, None
-    
-    # Fetch stream URL
-    stream_url, filename = await fetch_stream_url(terabox_url)
-    if not stream_url:
-        logger.warning("Failed to fetch stream URL")
+    except Exception as e:
+        logger.exception(f"An error occurred while processing the Terabox link: {e}")
         return None, None
-    
-    # Download video
-    file_path = await download_video(stream_url, filename)
-    if not file_path:
-        logger.warning("Failed to download video")
-        return None, None
-    
-    return file_path, filename

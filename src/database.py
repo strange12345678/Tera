@@ -1,3 +1,25 @@
+# Module-level wrappers for command.py compatibility
+def set_error_channel(user_id: int, channel_id: int) -> bool:
+    return db.set_error_channel(user_id, channel_id)
+
+def remove_error_channel(user_id: int, channel_id=None) -> bool:
+    return db.remove_error_channel(user_id)
+
+def set_auto_channel(user_id: int, channel_id: int) -> bool:
+    return db.set_auto_channel(user_id, channel_id)
+
+def remove_auto_channel(user_id: int, channel_id=None) -> bool:
+    return db.remove_auto_channel(user_id)
+
+def get_error_channel(user_id: int) -> int:
+    return db.get_error_channel(user_id)
+
+def get_auto_channel(user_id: int) -> int:
+    return db.get_auto_channel(user_id)
+# Utility function for compatibility with command.py
+def get_user_premium_status(user_id: int) -> str:
+    """Return the user's premium tier (free, bronze, gold, diamond)"""
+    return db.get_premium_tier(user_id)
 """
 MongoDB database module for user management
 """
