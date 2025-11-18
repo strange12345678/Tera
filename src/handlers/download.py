@@ -50,6 +50,10 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
     logger.info(f"Fetching stream URL for: {terabox_url} -> {api_url}")
 
     try:
+        # Wait a bit to let the API process the request
+        logger.info("Waiting 2 seconds for API to process request...")
+        await asyncio.sleep(2)
+        
         # Use browser-like headers for API call and retry once if anti-bot page detected
         api_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
@@ -73,7 +77,8 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         logger.warning(f"API appears to be protected by anti-bot (status {response.status}). Attempt {attempt+1}.")
                         anti_bot_detected = True
                         if attempt == 0:
-                            await asyncio.sleep(1)
+                            logger.info("Waiting 3 seconds before retrying...")
+                            await asyncio.sleep(3)
                             continue
                         else:
                             # proceed to fallback extraction below
