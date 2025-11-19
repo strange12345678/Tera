@@ -90,8 +90,10 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         text = peek
                 
                 if response.status == 404:
-                    logger.error(f"API returned 404 - Link may be invalid or expired")
-                    return None, None
+                    logger.error(f"API returned 404 - Link may be invalid or expired, trying fallback extraction")
+                    # Continue to try fallback extraction instead of returning immediately
+                    text = await response.text()
+                    logger.debug(f"API 404 Response: {text[:200]}")
                     
                 if response.status != 200:
                     logger.error(f"API returned status code {response.status}")
@@ -203,6 +205,8 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         'Accept-Language': 'en-US,en;q=0.9',
                         'Referer': 'https://terabox.com/'
                     }
+                    logger.info("Waiting 2 seconds before fetching Terabox page...")
+                    await asyncio.sleep(2)
                     async with session.get(terabox_url, headers=page_headers, timeout=aiohttp.ClientTimeout(total=config.TIMEOUT), ssl=False, allow_redirects=True) as page_resp:
                         logger.info(f"Terabox page response status: {page_resp.status}")
                         if page_resp.status == 200:
