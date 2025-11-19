@@ -50,10 +50,6 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
     logger.info(f"Fetching stream URL for: {terabox_url} -> {api_url}")
 
     try:
-        # Wait a bit to let the API process the request
-        logger.info("Waiting 2 seconds for API to process request...")
-        await asyncio.sleep(2)
-        
         # Use browser-like headers for API call and retry once if anti-bot page detected
         api_headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
@@ -77,8 +73,7 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         logger.warning(f"API appears to be protected by anti-bot (status {response.status}). Attempt {attempt+1}.")
                         anti_bot_detected = True
                         if attempt == 0:
-                            logger.info("Waiting 3 seconds before retrying...")
-                            await asyncio.sleep(3)
+                            await asyncio.sleep(1)
                             continue
                         else:
                             # proceed to fallback extraction below
@@ -90,10 +85,8 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         text = peek
                 
                 if response.status == 404:
-                    logger.error(f"API returned 404 - Link may be invalid or expired, trying fallback extraction")
-                    # Continue to try fallback extraction instead of returning immediately
-                    text = await response.text()
-                    logger.debug(f"API 404 Response: {text[:200]}")
+                    logger.error(f"API returned 404 - Link may be invalid or expired")
+                    return None, None
                     
                 if response.status != 200:
                     logger.error(f"API returned status code {response.status}")
@@ -205,8 +198,6 @@ async def fetch_stream_url(terabox_url: str) -> Optional[Tuple[str, str]]:
                         'Accept-Language': 'en-US,en;q=0.9',
                         'Referer': 'https://terabox.com/'
                     }
-                    logger.info("Waiting 2 seconds before fetching Terabox page...")
-                    await asyncio.sleep(2)
                     async with session.get(terabox_url, headers=page_headers, timeout=aiohttp.ClientTimeout(total=config.TIMEOUT), ssl=False, allow_redirects=True) as page_resp:
                         logger.info(f"Terabox page response status: {page_resp.status}")
                         if page_resp.status == 200:
@@ -445,28 +436,35 @@ async def _download_m3u8_with_ffmpeg(stream_url: str, file_path: str, filename: 
 
 async def process_terabox_link(url: str) -> Optional[Tuple[str, str]]:
     """
-    Main pipeline: validate -> fetch stream -> download
-    Returns: (file_path, filename) or (None, None) if failed
+    Complete pipeline: validate -> fetch stream -> download
+    Returns: (file_path, filename) or (None, None)
     """
-    logger.info(f"[PROCESS] Starting for: {url[:60]}")
-    
-    # Validate
+    # Validate URL
     terabox_url = await extract_terabox_url(url)
     if not terabox_url:
-        logger.warning(f"[PROCESS] Invalid URL")
+        logger.warning(f"Invalid Terabox URL: {url}")
         return None, None
     
-    # Fetch stream URL using the iTeraPlay API with fallbacks
+    # Fetch stream URL
     stream_url, filename = await fetch_stream_url(terabox_url)
     if not stream_url:
-        logger.warning(f"[PROCESS] Failed to fetch stream")
+        logger.warning("Failed to fetch stream URL")
         return None, None
     
-    # Download
-    file_path = await download_video(stream_url, filename)
+    # Download video
+    downloads_dir = Path("downloads")
+    downloads_dir.mkdir(exist_ok=True)
+    
+    # Clean filename
+    filename = re.sub(r'[<>:"/\\|?*]', '', filename)
+    if not filename.endswith(('.mp4', '.mkv', '.avi', '.mov', '.webm')):
+        filename += '.mp4'
+    
+    file_path = downloads_dir / filename
+    
+    file_path = await _download_direct_http(str(stream_url), str(file_path), filename)
     if not file_path:
-        logger.warning(f"[PROCESS] Failed to download")
+        logger.warning("Failed to download video")
         return None, None
     
-    logger.info(f"[PROCESS] Complete")
     return file_path, filename

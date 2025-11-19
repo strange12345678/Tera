@@ -379,8 +379,8 @@ Hi {user.first_name}!
         """
         # More flexible pattern that matches any terabox variant domain
         # Matches: terabox.com, 1024terabox.com, teraboxlink.com, etc.
-        # Pattern: [scheme]://[optional subdomain.]terabox[optional suffix].com/[s or folder]/[link-id]
-        terabox_pattern = r'https?://(?:[a-zA-Z0-9]+\.)*[a-zA-Z0-9]*terabox[a-zA-Z0-9]*\.com/(?:s|folder)/[a-zA-Z0-9_-]+'
+        # Pattern allows for any characters (including emojis) before the URL
+        terabox_pattern = r'https?://[a-zA-Z0-9.]*terabox[a-zA-Z0-9.]*\.com/(?:s|folder)/[a-zA-Z0-9_-]+'
         
         links = re.findall(terabox_pattern, text, re.IGNORECASE)
         
@@ -396,42 +396,10 @@ Hi {user.first_name}!
         
         logger.debug(f"Final unique links: {unique_links}")
         return unique_links
-
+    
     async def handle_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-        """Handle incoming message with Terabox links (including forwarded messages)"""
-        # Handle both regular and forwarded messages
-        user_message = update.message.text
-        is_forwarded = update.message.forward_origin is not None
-        
-        logger.info(f"[HANDLE_LINK] Called for user {update.message.from_user.id}, is_forwarded={is_forwarded}, text={user_message[:50] if user_message else None}...")
-        
-        # Special handling for forwarded messages
-        if is_forwarded:
-            logger.info(f"[HANDLE_LINK] Message is forwarded from {update.message.forward_origin}")
-            # For forwarded messages without text, Telegram doesn't preserve original content
-            if not user_message:
-                logger.debug(f"Forwarded message has no text")
-                await update.message.reply_text(
-                    "❌ Forwarded message has no text.\n\n"
-                    "Please forward a message that contains a Terabox link."
-                )
-                return WAITING_FOR_LINK
-        
-        # If message is still None, try to get caption if message has one
-        if not user_message:
-            if update.message.caption:
-                user_message = update.message.caption
-            else:
-                user_message = None
-        
-        if not user_message:
-            await update.message.reply_text(
-                "❌ No text content found in this message.\n\n"
-                "Please send a Terabox link like:\n"
-                "https://terabox.com/s/..."
-            )
-            return WAITING_FOR_LINK
-        
+        """Handle incoming message with Terabox links"""
+        user_message = update.message.text.strip()
         user_id = update.message.from_user.id
         
         logger.info(f"User {user_id} sent: {user_message[:50]}...")
@@ -443,11 +411,8 @@ Hi {user.first_name}!
         # Extract all Terabox links from the message using regex (most reliable method)
         links = self.extract_terabox_links(user_message)
         logger.debug(f"Extracted {len(links)} link(s) using regex: {links}")
-        logger.info(f"[EXTRACT] Text to search: {repr(user_message[:100])}")
-        logger.info(f"[EXTRACT] Found {len(links)} links: {links}")
         
         if not links:
-            logger.warning(f"[EXTRACT_FAILED] No links found in message. Text={repr(user_message)}")
             await update.message.reply_text(
                 "❌ No Terabox links found in your message.\n\n"
                 "Please send a valid Terabox URL like:\n"
@@ -1324,7 +1289,6 @@ Use the buttons below to access features:
         # Photo handler for payment screenshots (high priority, before text handler)
         self.app.add_handler(MessageHandler(filters.PHOTO, self.handle_payment_screenshot))
         
-        # Regular text and caption handlers (removed forwarded handler - handled inside handle_link instead)
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_link))
         # Also handle captions from media (photo, document, video, etc.) outside conversation
         self.app.add_handler(MessageHandler(filters.CAPTION, self.handle_link_from_caption))
